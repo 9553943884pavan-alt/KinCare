@@ -111,6 +111,12 @@ export default function AuthOnboardingScreen({
 
   return (
     <div className="min-h-screen bg-[#FAF8F5] text-slate-900 flex flex-col">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:rounded-xl focus:bg-teal-700 focus:text-white focus:font-extrabold"
+      >
+        Skip to main content
+      </a>
       {/* Calm Accessible Top Header */}
       <header className="bg-white border-b border-slate-200 px-4 sm:px-8 py-4">
         <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-4">
@@ -155,6 +161,7 @@ export default function AuthOnboardingScreen({
                 <button
                   key={sz.id}
                   type="button"
+                  aria-pressed={fontScale === sz.id}
                   onClick={() => setFontScale(sz.id)}
                   className={`px-2.5 py-1 rounded-lg text-xs font-extrabold cursor-pointer ${
                     fontScale === sz.id ? 'bg-teal-700 text-white' : 'text-slate-700'
@@ -168,7 +175,7 @@ export default function AuthOnboardingScreen({
         </div>
       </header>
 
-      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-8 space-y-8">
+      <main id="main-content" className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-8 space-y-8">
         {/* Login / Sign Up Switcher Pill */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>

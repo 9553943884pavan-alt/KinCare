@@ -645,4 +645,14 @@ describe('KinCare AI — Elderly Care & Medication Management Platform API', () 
       }
     }
   });
+
+  // Regression Test 6: Malformed JSON returns 400 structured error via global error handler
+  it('returns 400 structured JSON when receiving malformed JSON payload', async () => {
+    const res = await request(app)
+      .post('/api/auth/verify-passcode')
+      .set('Content-Type', 'application/json')
+      .send('{"passcode": "000000"');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Malformed JSON request body.');
+  });
 });

@@ -1,31 +1,9 @@
 import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import {
   HeartPulse,
-  ShieldCheck,
-  Pill,
-  Calendar,
-  Mail,
-  Sparkles,
-  Activity,
-  Users,
-  Plus,
-  Edit3,
-  Trash2,
   CheckCircle2,
   AlertTriangle,
-  Clock,
-  Volume2,
-  Download,
-  RefreshCw,
-  Send,
-  FileText,
-  Eye,
-  KeyRound,
-  PhoneCall,
-  Upload,
-  Check,
-  QrCode,
-  LogOut,
+  Mail,
 } from 'lucide-react';
 
 import {
@@ -33,14 +11,18 @@ import {
   getStoredToken,
   setStoredToken,
   getCustomGeminiKey,
-  setCustomGeminiKey,
   speakText,
-  downloadAppointmentICS,
-  exportAdherenceReportCSV,
 } from './utils/api.js';
+import HeaderBar from './components/HeaderBar.jsx';
+
 const PasscodeModal = lazy(() => import('./components/PasscodeModal.jsx'));
 const SeniorComfortView = lazy(() => import('./components/SeniorComfortView.jsx'));
 const AuthOnboardingScreen = lazy(() => import('./components/AuthOnboardingScreen.jsx'));
+const OverviewTab = lazy(() => import('./components/tabs/OverviewTab.jsx'));
+const MedicationsTab = lazy(() => import('./components/tabs/MedicationsTab.jsx'));
+const AppointmentsTab = lazy(() => import('./components/tabs/AppointmentsTab.jsx'));
+const EmailsTab = lazy(() => import('./components/tabs/EmailsTab.jsx'));
+const AiStudioTab = lazy(() => import('./components/tabs/AiStudioTab.jsx'));
 const MedicationModal = lazy(() =>
   import('./components/Modals.jsx').then((m) => ({ default: m.MedicationModal }))
 );
@@ -54,6 +36,31 @@ const ElderProfileModal = lazy(() =>
   import('./components/Modals.jsx').then((m) => ({ default: m.ElderProfileModal }))
 );
 
+function ToastBanner({ toastBanner }) {
+  if (!toastBanner) return null;
+  const toneClass =
+    toastBanner.type === 'error'
+      ? 'bg-rose-800 text-white border-rose-600'
+      : toastBanner.type === 'warning'
+        ? 'bg-amber-900 text-white border-amber-600'
+        : 'bg-slate-900 text-white border-teal-500';
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`fixed bottom-5 right-5 z-50 max-w-md px-5 py-3.5 rounded-2xl shadow-2xl border flex items-center gap-3 text-sm font-bold transition-all ${toneClass}`}
+    >
+      <CheckCircle2 className="w-5 h-5 text-teal-400 shrink-0" />
+      <span>{toastBanner.title}</span>
+    </div>
+  );
+}
+
+/**
+ * Root application coordinator for KinCare AI.
+ * Manages session hydration, role-based views, and shared API mutations.
+ */
 export default function App() {
   const [dashboard, setDashboard] = useState(null);
   const [publicCircle, setPublicCircle] = useState({
@@ -64,11 +71,11 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeMember, setActiveMember] = useState(null);
-  const [viewMode, setViewMode] = useState('command'); // 'comfort' (Senior Mode) | 'command' (Full Care Ecosystem)
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'medications' | 'appointments' | 'emails' | 'ai-studio'
+  const [viewMode, setViewMode] = useState('command');
+  const [activeTab, setActiveTab] = useState('overview');
 
   // Accessibility states
-  const [fontScale, setFontScale] = useState('normal'); // 'normal' | 'large' | 'xlarge'
+  const [fontScale, setFontScale] = useState('normal');
   const [highContrast, setHighContrast] = useState(false);
 
   // Modals
@@ -85,7 +92,7 @@ export default function App() {
   const [newRoutineTitle, setNewRoutineTitle] = useState('');
   const [newRoutineTime, setNewRoutineTime] = useState('10:00');
 
-  // Collaborative Vitals & Elder Autonomy Proposal state (Command Center)
+  // Collaborative Vitals & Elder Autonomy Proposal state
   const [proposalTitle, setProposalTitle] = useState('');
   const [proposalReason, setProposalReason] = useState('');
   const [cmdVitals, setCmdVitals] = useState({
@@ -128,6 +135,16 @@ export default function App() {
     setTimeout(() => setToastBanner(null), 4500);
   }, []);
 
+  const syncSelectedEmail = useCallback((emailLogs = []) => {
+    setSelectedEmailLog((prev) => {
+      if (!emailLogs.length) return null;
+      if (prev) {
+        return emailLogs.find((l) => l.id === prev.id) || emailLogs[0];
+      }
+      return emailLogs[0];
+    });
+  }, []);
+
   const fetchDashboardData = useCallback(async () => {
     try {
       const data = await apiFetch('/api/dashboard');
@@ -157,19 +174,13 @@ export default function App() {
           // Keep existing public circle fallback if unreachable
         }
       }
-      setSelectedEmailLog((prev) => {
-        if (!data.emailLogs?.length) return null;
-        if (prev) {
-          return data.emailLogs.find((l) => l.id === prev.id) || data.emailLogs[0];
-        }
-        return data.emailLogs[0];
-      });
+      syncSelectedEmail(data.emailLogs);
     } catch (err) {
       showToast(err.message || 'Failed to load dashboard data', 'error');
     } finally {
       setLoading(false);
     }
-  }, [showToast]);
+  }, [showToast, syncSelectedEmail]);
 
   useEffect(() => {
     fetchDashboardData();
@@ -192,17 +203,19 @@ export default function App() {
   // Passcode Authentication & Account Signup Handlers
   const applyAuthSession = async (res) => {
     setStoredToken(res.token);
+    setActiveMember(res.member);
+    setViewMode(res.member.role === 'elder' ? 'comfort' : 'command');
+
     if (res.dashboard && res.dashboard.elderProfile) {
       setDashboard(res.dashboard);
-      setDemoMode(Boolean(res.dashboard.demoMode));
-      setActiveMember(res.member);
-      setViewMode(res.member.role === 'elder' ? 'comfort' : 'command');
+      setPublicCircle((prev) => ({
+        ...prev,
+        demoMode: Boolean(res.dashboard.demoMode),
+      }));
+      syncSelectedEmail(res.dashboard.emailLogs);
       setIsAuthenticated(true);
-      setError(null);
       setLoading(false);
     } else {
-      setActiveMember(res.member);
-      setViewMode(res.member.role === 'elder' ? 'comfort' : 'command');
       await fetchDashboardData();
       setIsAuthenticated(true);
     }
@@ -359,7 +372,6 @@ export default function App() {
     }
   };
 
-  // Medication CRUD & Adherence
   const handleSaveMedication = async (medPayload) => {
     try {
       if (editingMed) {
@@ -404,7 +416,7 @@ export default function App() {
       if (res.autoEmailDispatched) {
         setSelectedEmailLog(res.autoEmailDispatched);
         showToast(
-          `Marked as Missed — Proactive Email Alert automatically sent to Care Circle!`,
+          'Marked as Missed — Proactive Email Alert automatically sent to Care Circle!',
           'warning'
         );
       } else {
@@ -418,9 +430,10 @@ export default function App() {
 
   const handleDeleteMedication = async (medId) => {
     try {
-      await apiFetch(`/api/medications/${medId}?actorName=${encodeURIComponent(activeMember?.name || 'Care Circle')}`, {
-        method: 'DELETE',
-      });
+      await apiFetch(
+        `/api/medications/${medId}?actorName=${encodeURIComponent(activeMember?.name || 'Care Circle')}`,
+        { method: 'DELETE' }
+      );
       showToast('Medication removed from schedule');
       await fetchDashboardData();
     } catch (err) {
@@ -428,7 +441,6 @@ export default function App() {
     }
   };
 
-  // Routine Handlers
   const handleToggleRoutine = async (routineId, completed) => {
     try {
       await apiFetch(`/api/routines/${routineId}`, {
@@ -475,7 +487,6 @@ export default function App() {
     }
   };
 
-  // Appointment Handlers
   const handleSaveAppointment = async (apptPayload) => {
     try {
       if (editingAppt) {
@@ -515,7 +526,6 @@ export default function App() {
     }
   };
 
-  // Autonomy & Vitals Handlers
   const handleCreateProposal = async (e) => {
     e.preventDefault();
     if (!proposalTitle.trim()) return;
@@ -540,6 +550,19 @@ export default function App() {
     }
   };
 
+  const handleLogVitals = async (vitalPayload) => {
+    try {
+      await apiFetch('/api/vitals', {
+        method: 'POST',
+        body: JSON.stringify(vitalPayload),
+      });
+      showToast('Logged new Blood Pressure, Sugar & Mood reading');
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to log vitals', 'error');
+    }
+  };
+
   const handleSubmitCommandVitals = async (e) => {
     e.preventDefault();
     await handleLogVitals({
@@ -551,6 +574,7 @@ export default function App() {
       loggedBy: activeMember?.name || 'Caregiver',
     });
   };
+
   const handleResolveAutonomy = async (decisionId, status, elderResponseNote) => {
     try {
       await apiFetch(`/api/autonomy/${decisionId}`, {
@@ -577,20 +601,6 @@ export default function App() {
     }
   };
 
-  const handleLogVitals = async (vitalPayload) => {
-    try {
-      await apiFetch('/api/vitals', {
-        method: 'POST',
-        body: JSON.stringify(vitalPayload),
-      });
-      showToast('Logged new Blood Pressure, Sugar & Mood reading');
-      await fetchDashboardData();
-    } catch (err) {
-      showToast(err.message || 'Failed to log vitals', 'error');
-    }
-  };
-
-  // Proactive Email Dispatch Handlers
   const handleDispatchEmail = async (type, itemId = null) => {
     setEmailSending(true);
     try {
@@ -658,7 +668,8 @@ export default function App() {
       setViewMode(targetRole === 'elder' ? 'comfort' : 'command');
       return;
     }
-    const member = careCircleMembers.find((m) => m.role === targetRole);
+    const members = dashboard?.careCircleMembers || [];
+    const member = members.find((m) => m.role === targetRole);
     if (!dashboard?.demoMode) {
       setPasscodeModalOpen(true);
       return;
@@ -687,7 +698,6 @@ export default function App() {
     }
   };
 
-  // Gemini AI Handlers
   const handleRunInteractionCheck = async () => {
     setInteractionLoading(true);
     try {
@@ -814,22 +824,7 @@ export default function App() {
   if (!isAuthenticated || !elderProfile) {
     return (
       <div className={highContrast ? 'high-contrast-mode' : ''}>
-        {toastBanner && (
-          <div
-            role="status"
-            aria-live="polite"
-            className={`fixed bottom-5 right-5 z-50 max-w-md px-5 py-3.5 rounded-2xl shadow-2xl border flex items-center gap-3 text-sm font-bold transition-all ${
-              toastBanner.type === 'error'
-                ? 'bg-rose-800 text-white border-rose-600'
-                : toastBanner.type === 'warning'
-                  ? 'bg-amber-900 text-white border-amber-600'
-                  : 'bg-slate-900 text-white border-teal-500'
-            }`}
-          >
-            <CheckCircle2 className="w-5 h-5 text-teal-400 shrink-0" />
-            <span>{toastBanner.title}</span>
-          </div>
-        )}
+        <ToastBanner toastBanner={toastBanner} />
         <Suspense
           fallback={
             <div className="min-h-screen flex items-center justify-center bg-[#FAF8F5] text-slate-700 font-bold">
@@ -854,250 +849,30 @@ export default function App() {
 
   return (
     <div className={`min-h-screen flex flex-col bg-slate-50 text-slate-900 ${highContrast ? 'high-contrast-mode' : ''}`}>
-      {/* Toast Notification */}
-      {toastBanner && (
-        <div
-          role="status"
-          aria-live="polite"
-          className={`fixed bottom-5 right-5 z-50 max-w-md px-5 py-3.5 rounded-2xl shadow-2xl border flex items-center gap-3 text-sm font-bold transition-all ${
-            toastBanner.type === 'error'
-              ? 'bg-rose-800 text-white border-rose-600'
-              : toastBanner.type === 'warning'
-              ? 'bg-amber-900 text-white border-amber-600'
-              : 'bg-slate-900 text-white border-teal-500'
-          }`}
-        >
-          <CheckCircle2 className="w-5 h-5 text-teal-400 shrink-0" />
-          <span>{toastBanner.title}</span>
-        </div>
-      )}
+      <ToastBanner toastBanner={toastBanner} />
 
-      {/* Top Accessibility & Security Bar */}
-      <div className="bg-slate-900 text-slate-200 text-xs py-2 px-4 border-b border-slate-800">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-1.5 font-bold text-teal-400">
-              <ShieldCheck className="w-4 h-4" />
-              Passcode Protected Ecosystem
-            </span>
-            <span className="hidden sm:inline text-slate-500">|</span>
-            <span className="hidden sm:inline text-slate-300">
-              Patient at Centre: <strong>{elderProfile.name} ({elderProfile.age} yrs)</strong>
-            </span>
-          </div>
+      <HeaderBar
+        elderProfile={elderProfile}
+        fontScale={fontScale}
+        setFontScale={setFontScale}
+        highContrast={highContrast}
+        setHighContrast={setHighContrast}
+        onOpenEmergencyModal={() => setEmergencyModalOpen(true)}
+        demoMode={Boolean(dashboard?.demoMode)}
+        onResetDemo={handleResetDemo}
+        activeMember={activeMember}
+        viewMode={viewMode}
+        onQuickRoleSwitch={handleQuickRoleSwitch}
+        onOpenPasscodeModal={() => setPasscodeModalOpen(true)}
+        onSignOut={handleSignOut}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        medicationsCount={medications.length}
+        appointmentsCount={appointments.length}
+        emailLogsCount={emailLogs.length}
+      />
 
-          {/* Accessibility Controls (WCAG AAA) */}
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center bg-slate-800 rounded-lg p-0.5 border border-slate-700" role="group" aria-label="Text Size">
-              <button
-                type="button"
-                onClick={() => setFontScale('normal')}
-                className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
-                  fontScale === 'normal' ? 'bg-teal-600 text-white' : 'text-slate-300'
-                }`}
-              >
-                A
-              </button>
-              <button
-                type="button"
-                onClick={() => setFontScale('large')}
-                className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
-                  fontScale === 'large' ? 'bg-teal-600 text-white' : 'text-slate-300'
-                }`}
-              >
-                A+
-              </button>
-              <button
-                type="button"
-                onClick={() => setFontScale('xlarge')}
-                className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
-                  fontScale === 'xlarge' ? 'bg-teal-600 text-white' : 'text-slate-300'
-                }`}
-              >
-                A++
-              </button>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setHighContrast(!highContrast)}
-              className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer ${
-                highContrast
-                  ? 'bg-amber-400 text-slate-950 border-amber-300'
-                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
-              }`}
-            >
-              High Contrast
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setEmergencyModalOpen(true)}
-              className="px-2.5 py-1 rounded-lg bg-rose-700 hover:bg-rose-600 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer"
-            >
-              <QrCode className="w-3.5 h-3.5" />
-              Emergency ID
-            </button>
-
-            {dashboard?.demoMode && (
-              <button
-                type="button"
-                onClick={handleResetDemo}
-                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] flex items-center gap-1 cursor-pointer"
-                title="Reset demo state"
-              >
-                <RefreshCw className="w-3 h-3" />
-                Reset Demo
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Main Header & Mode Switcher */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-teal-700 to-emerald-600 text-white flex items-center justify-center shadow-md">
-              <HeartPulse className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-extrabold tracking-tight text-slate-900">
-                  KinCare <span className="text-teal-700">AI</span>
-                </h1>
-                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200">
-                  Gemini 3.5 + Resend + Cloud Run
-                </span>
-              </div>
-              <p className="text-xs text-slate-500">
-                Smart Elderly Care, Medication Adherence &amp; Collaborative Family Platform
-              </p>
-            </div>
-          </div>
-
-          {/* Clean Role Switcher + Account Sign Out / Switch User */}
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div
-              className="inline-flex rounded-2xl bg-slate-100 p-1 border border-slate-200"
-              role="group"
-              aria-label="Three Main User Roles Switcher"
-            >
-              <button
-                type="button"
-                onClick={() => handleQuickRoleSwitch('elder')}
-                className={`px-3 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
-                  activeMember?.role === 'elder' && viewMode === 'comfort'
-                    ? 'bg-teal-700 text-white shadow-xs'
-                    : 'text-slate-700 hover:text-slate-900'
-                }`}
-              >
-                <Volume2 className="w-3.5 h-3.5" />
-                Elderly View
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickRoleSwitch('family')}
-                className={`px-3 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
-                  activeMember?.role === 'family' && viewMode === 'command'
-                    ? 'bg-indigo-700 text-white shadow-xs'
-                    : 'text-slate-700 hover:text-slate-900'
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" />
-                Family Portal
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickRoleSwitch('caretaker')}
-                className={`px-3 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
-                  activeMember?.role === 'caretaker' && viewMode === 'command'
-                    ? 'bg-amber-600 text-white shadow-xs'
-                    : 'text-slate-700 hover:text-slate-900'
-                }`}
-              >
-                <Activity className="w-3.5 h-3.5" />
-                Caregiver View
-              </button>
-            </div>
-
-            {viewMode === 'command' && (
-              <button
-                type="button"
-                onClick={() => setPasscodeModalOpen(true)}
-                className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-slate-900 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                title="Manage Care Circle Members & Passcodes"
-              >
-                <KeyRound className="w-3.5 h-3.5 text-amber-700" />
-                <span>{activeMember?.name?.split(' ')[0] || 'Vault'}</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer"
-              title="Sign Out or Create / Switch Account"
-            >
-              <LogOut className="w-3.5 h-3.5 text-slate-600" />
-              Switch Account / Login
-            </button>
-          </div>
-        </div>
-
-        {/* Navigation Tabs (when in Family & Caretaker Command Mode) */}
-        {viewMode === 'command' && (
-          <nav
-            className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center gap-1 overflow-x-auto border-t border-slate-100 bg-slate-50/60"
-            aria-label="Primary Platform Sections"
-          >
-            {[
-              { id: 'overview', label: 'Ecosystem Overview', icon: Activity },
-              {
-                id: 'medications',
-                label: `Medications & Adherence (${medications.length})`,
-                icon: Pill,
-              },
-              {
-                id: 'appointments',
-                label: `Appointments & Routines (${appointments.length})`,
-                icon: Calendar,
-              },
-              {
-                id: 'emails',
-                label: `Proactive Email Alerts (${emailLogs.length})`,
-                icon: Mail,
-              },
-              {
-                id: 'ai-studio',
-                label: 'Gemini AI Prescription & Safety Hub',
-                icon: Sparkles,
-              },
-            ].map((tab) => {
-              const Icon = tab.icon;
-              const active = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`py-3 px-4 text-xs sm:text-sm font-bold border-b-2 whitespace-nowrap flex items-center gap-2 transition cursor-pointer ${
-                    active
-                      ? 'border-teal-700 text-teal-800 bg-white'
-                      : 'border-transparent text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </nav>
-        )}
-      </header>
-
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
+      <main id="main-content" className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
         {viewMode === 'comfort' ? (
           <Suspense
             fallback={
@@ -1126,7 +901,6 @@ export default function App() {
           </Suspense>
         ) : (
           <div className="space-y-6">
-            {/* Proactive Missed Medication Alert Banner (Always visible if a dose is missed!) */}
             {missedMedications.length > 0 && (
               <div className="rounded-2xl bg-rose-50 border-2 border-rose-300 p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
                 <div className="flex items-start gap-3.5">
@@ -1138,9 +912,7 @@ export default function App() {
                       <span className="text-xs font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-rose-200 text-rose-900">
                         Proactive Missed Dose Detection
                       </span>
-                      <span className="text-xs text-rose-700 font-semibold">
-                        Auto-Escalation Active
-                      </span>
+                      <span className="text-xs text-rose-700 font-semibold">Auto-Escalation Active</span>
                     </div>
                     <h2 className="text-base sm:text-lg font-extrabold text-slate-900 mt-1">
                       {elderProfile.preferredName} has {missedMedications.length} missed medication dose:{' '}
@@ -1181,1458 +953,173 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 1: OVERVIEW */}
-            {activeTab === 'overview' && (
-              <div className="space-y-6">
-                {/* Clear 1 -> 2 -> 3 Workflow Guide for New Users & Judges */}
-                <section className="rounded-3xl bg-gradient-to-r from-teal-800 via-teal-700 to-indigo-800 text-white p-5 sm:p-6 shadow-sm">
-                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-4">
-                    <div>
-                      <span className="text-[11px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 text-teal-100">
-                        How KinCare AI Works — 3 Simple Steps
-                      </span>
-                      <h2 className="text-lg sm:text-xl font-extrabold mt-2">
-                        Easy Workflow for Families, Caregivers &amp; Seniors
-                      </h2>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setElderProfileModalOpen(true)}
-                        className="px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 text-white text-xs font-extrabold cursor-pointer"
-                      >
-                        Edit Patient Profile
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          exportAdherenceReportCSV({
-                            elderProfile,
-                            medications,
-                            vitalsLog,
-                            appointments,
-                          })
-                        }
-                        className="px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        CSV Care Report
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleQuickRoleSwitch('elder')}
-                        className="px-3.5 py-2 rounded-xl bg-white text-teal-900 hover:bg-teal-50 text-xs font-extrabold cursor-pointer"
-                      >
-                        Try Simple Senior View →
-                      </button>
-                      <button
-                        type="button"
-                        disabled={emailSending}
-                        onClick={() => {
-                          handleSimulate9AmMissed();
-                          setActiveTab('emails');
-                        }}
-                        className="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold cursor-pointer"
-                      >
-                        Test 9:00 AM Missed Alert Email →
-                      </button>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="rounded-2xl bg-white/10 border border-white/15 p-3.5">
-                      <p className="text-xs font-extrabold text-amber-300 uppercase">Step 1 • Setup Care</p>
-                      <p className="text-sm font-bold mt-0.5">Family or Caregiver adds pills &amp; visits</p>
-                      <p className="text-xs text-teal-100 mt-1">
-                        Scan a prescription or manage schedules cleanly in tabs above.
-                      </p>
-                    </div>
-                    <div className="rounded-2xl bg-white/10 border border-white/15 p-3.5">
-                      <p className="text-xs font-extrabold text-amber-300 uppercase">Step 2 • Senior 1-Tap</p>
-                      <p className="text-sm font-bold mt-0.5">Elderly person confirms in comfort mode</p>
-                      <p className="text-xs text-teal-100 mt-1">
-                        One big &quot;I Took This Medicine&quot; button, Voice Helper, &amp; 1-tap mood check.
-                      </p>
-                    </div>
-                    <div className="rounded-2xl bg-white/10 border border-white/15 p-3.5">
-                      <p className="text-xs font-extrabold text-amber-300 uppercase">Step 3 • Auto Email</p>
-                      <p className="text-sm font-bold mt-0.5">Missed 9:00 AM doses trigger instant email</p>
-                      <p className="text-xs text-teal-100 mt-1">
-                        Unconfirmed doses automatically alert trusted contacts via Resend.
-                      </p>
-                    </div>
-                  </div>
-                </section>
-
-                {/* Summary KPI Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
-                    <div className="flex items-center justify-between text-xs font-bold text-slate-500 uppercase">
-                      <span>Today's Adherence</span>
-                      <Pill className="w-4 h-4 text-teal-600" />
-                    </div>
-                    <p className="text-3xl font-extrabold text-slate-900 mt-2">
-                      {summaryMetrics.takenMeds} / {summaryMetrics.totalMeds}
-                    </p>
-                    <p className="text-xs font-semibold text-teal-700 mt-1">
-                      {summaryMetrics.missedMeds > 0
-                        ? `${summaryMetrics.missedMeds} dose overdue • ${summaryMetrics.upcomingMeds} upcoming`
-                        : 'All past doses taken on time'}
-                    </p>
-                  </div>
-
-                  <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
-                    <div className="flex items-center justify-between text-xs font-bold text-slate-500 uppercase">
-                      <span>Next Doctor Visit</span>
-                      <Calendar className="w-4 h-4 text-indigo-600" />
-                    </div>
-                    <p className="text-lg font-extrabold text-slate-900 mt-2 truncate">
-                      {appointments[0]?.doctorName || 'None Scheduled'}
-                    </p>
-                    <p className="text-xs font-semibold text-indigo-700 mt-1">
-                      {appointments[0]
-                        ? `${appointments[0].date} at ${appointments[0].time} (${appointments[0].specialty})`
-                        : 'Add an appointment'}
-                    </p>
-                  </div>
-
-                  <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
-                    <div className="flex items-center justify-between text-xs font-bold text-slate-500 uppercase">
-                      <span>Latest Vitals & Mood</span>
-                      <HeartPulse className="w-4 h-4 text-rose-600" />
-                    </div>
-                    <p className="text-2xl font-extrabold text-slate-900 mt-2">
-                      {vitalsLog[0] ? `${vitalsLog[0].systolic}/${vitalsLog[0].diastolic}` : '128/82'}{' '}
-                      <span className="text-xs font-normal text-slate-500">mmHg</span>
-                    </p>
-                    <p className="text-xs font-semibold text-emerald-700 mt-1">
-                      Sugar: {vitalsLog[0]?.bloodSugarMgDl || 112} mg/dL • {vitalsLog[0]?.mood}
-                    </p>
-                  </div>
-
-                  <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
-                    <div className="flex items-center justify-between text-xs font-bold text-slate-500 uppercase">
-                      <span>Proactive Email Alerts</span>
-                      <Mail className="w-4 h-4 text-amber-600" />
-                    </div>
-                    <p className="text-3xl font-extrabold text-slate-900 mt-2">{emailLogs.length}</p>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('emails')}
-                      className="text-xs font-bold text-teal-700 hover:underline mt-1 inline-block cursor-pointer"
-                    >
-                      View Live Email Outbox →
-                    </button>
-                  </div>
+            <Suspense
+              fallback={
+                <div className="p-8 text-center text-slate-600 font-semibold">
+                  Loading Care Portal Section...
                 </div>
+              }
+            >
+              {activeTab === 'overview' && (
+                <OverviewTab
+                  elderProfile={elderProfile}
+                  summaryMetrics={summaryMetrics}
+                  appointments={appointments}
+                  vitalsLog={vitalsLog}
+                  emailLogs={emailLogs}
+                  medications={medications}
+                  adherenceHistory={adherenceHistory}
+                  careCircleMembers={careCircleMembers}
+                  autonomyDecisions={autonomyDecisions}
+                  emailSending={emailSending}
+                  cmdVitals={cmdVitals}
+                  setCmdVitals={setCmdVitals}
+                  proposalTitle={proposalTitle}
+                  setProposalTitle={setProposalTitle}
+                  proposalReason={proposalReason}
+                  setProposalReason={setProposalReason}
+                  activityFeed={activityFeed}
+                  onOpenElderProfileModal={() => setElderProfileModalOpen(true)}
+                  onQuickRoleSwitch={handleQuickRoleSwitch}
+                  onSimulate9AmMissed={handleSimulate9AmMissed}
+                  setActiveTab={setActiveTab}
+                  onOpenNewMedModal={() => {
+                    setEditingMed(null);
+                    setMedModalOpen(true);
+                  }}
+                  onEditMed={(med) => {
+                    setEditingMed(med);
+                    setMedModalOpen(true);
+                  }}
+                  onUpdateMedicationStatus={handleUpdateMedicationStatus}
+                  onRestockMedication={handleRestockMedication}
+                  onOpenPasscodeModal={() => setPasscodeModalOpen(true)}
+                  onDeleteCareMember={handleDeleteCareMember}
+                  onToggleMemberNotify={handleToggleMemberNotify}
+                  onSubmitCommandVitals={handleSubmitCommandVitals}
+                  onCreateProposal={handleCreateProposal}
+                />
+              )}
 
-                {/* Middle Grid: Today's Medication Timeline + 7-Day Adherence & Care Circle */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {/* Left 2 Columns: Today's Shared Medication Schedule */}
-                  <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <h2 className="text-lg font-extrabold text-slate-900">
-                          Today's Medication Schedule & Adherence Tracker
-                        </h2>
-                        <p className="text-xs text-slate-500">
-                          Real-time shared status across Elder, Family & Caretaker devices
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingMed(null);
-                          setMedModalOpen(true);
-                        }}
-                        className="px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Plus className="w-4 h-4" />
-                        Add Medication
-                      </button>
-                    </div>
+              {activeTab === 'medications' && (
+                <MedicationsTab
+                  elderProfile={elderProfile}
+                  medications={medications}
+                  filteredMedications={filteredMedications}
+                  vitalsLog={vitalsLog}
+                  appointments={appointments}
+                  slotFilter={slotFilter}
+                  setSlotFilter={setSlotFilter}
+                  interactionLoading={interactionLoading}
+                  interactionReport={interactionReport}
+                  onRunInteractionCheck={handleRunInteractionCheck}
+                  onOpenNewMedModal={() => {
+                    setEditingMed(null);
+                    setMedModalOpen(true);
+                  }}
+                  onEditMed={(med) => {
+                    setEditingMed(med);
+                    setMedModalOpen(true);
+                  }}
+                  onDeleteMedication={handleDeleteMedication}
+                  onRestockMedication={handleRestockMedication}
+                  onUpdateMedicationStatus={handleUpdateMedicationStatus}
+                />
+              )}
 
-                    <div className="space-y-3">
-                      {medications.map((med) => (
-                        <div
-                          key={med.id}
-                          className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition ${
-                            med.status === 'taken'
-                              ? 'bg-emerald-50/50 border-emerald-200'
-                              : med.status === 'missed'
-                              ? 'bg-rose-50/70 border-rose-300'
-                              : 'bg-slate-50/70 border-slate-200'
-                          }`}
-                        >
-                          <div className="space-y-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="px-2.5 py-0.5 rounded-md bg-slate-900 text-white text-xs font-mono font-bold">
-                                {med.scheduledTime}
-                              </span>
-                              <h3 className="font-extrabold text-slate-900 text-base">
-                                {med.name} <span className="text-teal-700">({med.dosage})</span>
-                              </h3>
-                              <span
-                                className={`text-[11px] font-extrabold uppercase px-2.5 py-0.5 rounded-full ${
-                                  med.status === 'taken'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : med.status === 'missed'
-                                    ? 'bg-rose-200 text-rose-900'
-                                    : 'bg-amber-100 text-amber-900'
-                                }`}
-                              >
-                                {med.status}
-                              </span>
-                              {med.stockRemaining <= med.refillThreshold && (
-                                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">
-                                  Low Stock: {med.stockRemaining} left
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-xs text-slate-600">
-                              <strong>{med.mealInstruction}</strong> • Visual: {med.pillColor} {med.pillShape} • Purpose:{' '}
-                              {med.purpose}
-                            </p>
-                          </div>
+              {activeTab === 'appointments' && (
+                <AppointmentsTab
+                  elderProfile={elderProfile}
+                  appointments={appointments}
+                  routines={routines}
+                  doctorBrief={doctorBrief}
+                  doctorBriefLoading={doctorBriefLoading}
+                  newRoutineTime={newRoutineTime}
+                  setNewRoutineTime={setNewRoutineTime}
+                  newRoutineTitle={newRoutineTitle}
+                  setNewRoutineTitle={setNewRoutineTitle}
+                  onGenerateDoctorBrief={handleGenerateDoctorBrief}
+                  onOpenNewApptModal={() => {
+                    setEditingAppt(null);
+                    setApptModalOpen(true);
+                  }}
+                  onEditAppt={(appt) => {
+                    setEditingAppt(appt);
+                    setApptModalOpen(true);
+                  }}
+                  onToggleAppointmentStatus={handleToggleAppointmentStatus}
+                  onDispatchEmail={handleDispatchEmail}
+                  setActiveTab={setActiveTab}
+                  onDeleteAppointment={handleDeleteAppointment}
+                  onAddRoutine={handleAddRoutine}
+                  onToggleRoutine={handleToggleRoutine}
+                  onDeleteRoutine={handleDeleteRoutine}
+                />
+              )}
 
-                          <div className="flex items-center gap-2 shrink-0">
-                            {med.status !== 'taken' && (
-                              <button
-                                type="button"
-                                onClick={() => handleUpdateMedicationStatus(med.id, 'taken')}
-                                className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold cursor-pointer"
-                              >
-                                Mark Taken
-                              </button>
-                            )}
-                            {med.status !== 'missed' && (
-                              <button
-                                type="button"
-                                onClick={() => handleUpdateMedicationStatus(med.id, 'missed')}
-                                className="px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 text-xs font-bold cursor-pointer"
-                              >
-                                Missed
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => handleRestockMedication(med)}
-                              className="px-2.5 py-1.5 rounded-xl border border-teal-300 bg-teal-50 hover:bg-teal-100 text-teal-900 text-[11px] font-bold cursor-pointer"
-                              title="Refill +30 pills into stock"
-                            >
-                              + Refill 30
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingMed(med);
-                                setMedModalOpen(true);
-                              }}
-                              className="p-2 rounded-xl border border-slate-200 hover:bg-white text-slate-600 cursor-pointer"
-                              title="Edit Medication"
-                            >
-                              <Edit3 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+              {activeTab === 'emails' && (
+                <EmailsTab
+                  elderProfile={elderProfile}
+                  autoWatcherActive={autoWatcherActive}
+                  setAutoWatcherActive={setAutoWatcherActive}
+                  lastWatcherCheck={lastWatcherCheck}
+                  setLastWatcherCheck={setLastWatcherCheck}
+                  emailSending={emailSending}
+                  emailCustomNote={emailCustomNote}
+                  setEmailCustomNote={setEmailCustomNote}
+                  emailLogs={emailLogs}
+                  selectedEmailLog={selectedEmailLog}
+                  setSelectedEmailLog={setSelectedEmailLog}
+                  onSimulate9AmMissed={handleSimulate9AmMissed}
+                  onRunAutoScanReminders={handleRunAutoScanReminders}
+                  onDispatchEmail={handleDispatchEmail}
+                />
+              )}
 
-                  {/* Right Column: 7-Day Adherence Chart + Shared Care Circle Passcode Roster */}
-                  <div className="space-y-6">
-                    {/* 7-Day Adherence Visual Chart */}
-                    <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs">
-                      <h3 className="text-base font-extrabold text-slate-900 mb-1">
-                        Weekly Adherence Trend
-                      </h3>
-                      <p className="text-xs text-slate-500 mb-4">
-                        Consistent morning adherence; 09:00 AM BP dose needs gentle follow-up
-                      </p>
-                      <div className="grid grid-cols-6 gap-2 items-end h-32 pt-4 px-2 bg-slate-50 rounded-2xl border border-slate-100">
-                        {adherenceHistory.map((item) => (
-                          <div key={item.day} className="flex flex-col items-center gap-1.5 h-full justify-end">
-                            <span className="text-[10px] font-bold text-slate-600">
-                              {item.adherencePct}%
-                            </span>
-                            <div
-                              className={`w-full rounded-t-lg transition-all ${
-                                item.adherencePct === 100 ? 'bg-teal-600' : 'bg-amber-500'
-                              }`}
-                              style={{ height: `${Math.max(20, item.adherencePct * 0.7)}%` }}
-                            />
-                            <span className="text-[11px] font-bold text-slate-700 pb-1">
-                              {item.day}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Authorized Care Circle Members */}
-                    <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-base font-extrabold text-slate-900">
-                          Authorized Care Circle
-                        </h3>
-                        <button
-                          type="button"
-                          onClick={() => setPasscodeModalOpen(true)}
-                          className="text-xs font-bold text-teal-700 hover:underline cursor-pointer"
-                        >
-                          + Manage Passcodes
-                        </button>
-                      </div>
-                      <div className="space-y-2.5">
-                        {careCircleMembers.map((m) => (
-                          <div
-                            key={m.id}
-                            className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div>
-                                <p className="font-bold text-slate-900">
-                                  {m.name}{' '}
-                                  <span className="text-[10px] uppercase px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 ml-1">
-                                    {m.role}
-                                  </span>
-                                </p>
-                                <p className="text-slate-500">{m.email}</p>
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-mono text-[11px] font-bold text-slate-600 bg-white px-2 py-1 rounded-lg border border-slate-200">
-                                  {m.passcodePlainHint ? `PIN: ${m.passcodePlainHint}` : 'Passcode Protected'}
-                                </span>
-                                {m.role !== 'elder' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteCareMember(m.id)}
-                                    className="p-1.5 rounded-lg border border-rose-200 bg-white text-rose-600 hover:bg-rose-50 cursor-pointer"
-                                    title="Remove Care Circle member"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/70">
-                              <span className="text-[10px] font-bold uppercase text-slate-500 mr-1">
-                                Email Alerts:
-                              </span>
-                              {[
-                                { key: 'notifyOnMissedMed', label: 'Missed Med' },
-                                { key: 'notifyOnUpcomingDose', label: 'Upcoming' },
-                                { key: 'notifyOnAppointment', label: 'Visits' },
-                              ].map((pref) => {
-                                const enabled = Boolean(m[pref.key]);
-                                return (
-                                  <button
-                                    key={pref.key}
-                                    type="button"
-                                    onClick={() => handleToggleMemberNotify(m.id, pref.key, !enabled)}
-                                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer ${
-                                      enabled
-                                        ? 'bg-emerald-100 border-emerald-300 text-emerald-900'
-                                        : 'bg-white border-slate-300 text-slate-500'
-                                    }`}
-                                  >
-                                    {enabled ? '✓ ' : ''}
-                                    {pref.label}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Collaborative Caregiver Vitals Logger & Elder Autonomy Proposal Center */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Log Clinical Vitals & Mood */}
-                  <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-base font-extrabold text-slate-900">
-                          Clinical Vitals &amp; Check-In Logger
-                        </h3>
-                        <p className="text-xs text-slate-500">
-                          Record BP, Heart Rate, Sugar &amp; Mood (syncs to Doctor Brief &amp; Daily Digest)
-                        </p>
-                      </div>
-                      <HeartPulse className="w-5 h-5 text-rose-600" />
-                    </div>
-
-                    <form onSubmit={handleSubmitCommandVitals} className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-                      <label className="block text-[11px] font-bold text-slate-700">
-                        BP Systolic
-                        <input
-                          type="number"
-                          value={cmdVitals.systolic}
-                          onChange={(e) => setCmdVitals({ ...cmdVitals, systolic: e.target.value })}
-                          className="mt-1 w-full px-2.5 py-2 rounded-xl border border-slate-300 text-xs font-bold"
-                        />
-                      </label>
-                      <label className="block text-[11px] font-bold text-slate-700">
-                        BP Diastolic
-                        <input
-                          type="number"
-                          value={cmdVitals.diastolic}
-                          onChange={(e) => setCmdVitals({ ...cmdVitals, diastolic: e.target.value })}
-                          className="mt-1 w-full px-2.5 py-2 rounded-xl border border-slate-300 text-xs font-bold"
-                        />
-                      </label>
-                      <label className="block text-[11px] font-bold text-slate-700">
-                        Pulse (bpm)
-                        <input
-                          type="number"
-                          value={cmdVitals.heartRate}
-                          onChange={(e) => setCmdVitals({ ...cmdVitals, heartRate: e.target.value })}
-                          className="mt-1 w-full px-2.5 py-2 rounded-xl border border-slate-300 text-xs font-bold"
-                        />
-                      </label>
-                      <label className="block text-[11px] font-bold text-slate-700">
-                        Glucose mg/dL
-                        <input
-                          type="number"
-                          value={cmdVitals.bloodSugarMgDl}
-                          onChange={(e) =>
-                            setCmdVitals({ ...cmdVitals, bloodSugarMgDl: e.target.value })
-                          }
-                          className="mt-1 w-full px-2.5 py-2 rounded-xl border border-slate-300 text-xs font-bold"
-                        />
-                      </label>
-                      <div className="flex items-end col-span-2 sm:col-span-1">
-                        <button
-                          type="submit"
-                          className="w-full py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-extrabold cursor-pointer"
-                        >
-                          Log Vitals
-                        </button>
-                      </div>
-                    </form>
-
-                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                      {vitalsLog.slice(0, 4).map((v) => (
-                        <div
-                          key={v.id}
-                          className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs"
-                        >
-                          <span className="font-bold text-slate-800">
-                            BP {v.systolic}/{v.diastolic} • HR {v.heartRate || 72} bpm • Glucose{' '}
-                            {v.bloodSugarMgDl} mg/dL
-                          </span>
-                          <span className="text-slate-500">
-                            {v.mood} ({v.recordedAt})
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Propose Schedule Change for Elder Approval */}
-                  <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-base font-extrabold text-slate-900">
-                          Elder Consent &amp; Autonomy Proposals
-                        </h3>
-                        <p className="text-xs text-slate-500">
-                          Propose care changes for {elderProfile.preferredName}&apos;s 1-tap Yes/No approval in Senior View
-                        </p>
-                      </div>
-                      <ShieldCheck className="w-5 h-5 text-indigo-700" />
-                    </div>
-
-                    <form onSubmit={handleCreateProposal} className="space-y-2.5">
-                      <input
-                        type="text"
-                        value={proposalTitle}
-                        onChange={(e) => setProposalTitle(e.target.value)}
-                        placeholder="Proposal title (e.g. Shift Evening Walk to 5:30 PM)"
-                        className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs font-semibold"
-                      />
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={proposalReason}
-                          onChange={(e) => setProposalReason(e.target.value)}
-                          placeholder="Plain-language reason for elder..."
-                          className="flex-1 px-3.5 py-2 rounded-xl border border-slate-300 text-xs"
-                        />
-                        <button
-                          type="submit"
-                          className="px-4 py-2 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-extrabold shrink-0 cursor-pointer"
-                        >
-                          Send Request
-                        </button>
-                      </div>
-                    </form>
-
-                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                      {autonomyDecisions.slice(0, 4).map((dec) => (
-                        <div
-                          key={dec.id}
-                          className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2 text-xs"
-                        >
-                          <div className="min-w-0">
-                            <p className="font-bold text-slate-800 truncate">{dec.title}</p>
-                            <p className="text-slate-500 truncate">By {dec.proposedBy}</p>
-                          </div>
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase shrink-0 ${
-                              dec.status === 'approved_by_elder'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : dec.status === 'declined_by_elder'
-                                  ? 'bg-rose-100 text-rose-800'
-                                  : 'bg-amber-100 text-amber-900'
-                            }`}
-                          >
-                            {dec.status.replace(/_/g, ' ')}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Live Collaborative Care Activity Feed */}
-                <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs">
-                  <h3 className="text-base font-extrabold text-slate-900 mb-3">
-                    Real-Time Care Circle Audit & Activity Log
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    {activityFeed.slice(0, 6).map((act) => (
-                      <div
-                        key={act.id}
-                        className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1"
-                      >
-                        <div className="flex items-center justify-between text-slate-500 font-semibold">
-                          <span>{act.actor}</span>
-                          <span>{act.timestamp}</span>
-                        </div>
-                        <p className="text-slate-800 font-medium">{act.action}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 2: MEDICATIONS & ADHERENCE MANAGER */}
-            {activeTab === 'medications' && (
-              <div className="space-y-6">
-                <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-200">
-                    <div>
-                      <h2 className="text-xl font-extrabold text-slate-900">
-                        Medication Schedule & Adherence Management
-                      </h2>
-                      <p className="text-xs text-slate-500">
-                        Add, edit, or adjust doses, track pill inventory, and run Gemini AI interaction checks
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2.5">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          exportAdherenceReportCSV({
-                            elderProfile,
-                            medications,
-                            vitalsLog,
-                            appointments,
-                          })
-                        }
-                        className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Download className="w-4 h-4 text-teal-700" />
-                        Export CSV Report
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleRunInteractionCheck}
-                        disabled={interactionLoading}
-                        className="px-4 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Sparkles className="w-4 h-4 text-indigo-700" />
-                        {interactionLoading ? 'Analyzing...' : 'Run AI Interaction Check'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingMed(null);
-                          setMedModalOpen(true);
-                        }}
-                        className="px-4 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Plus className="w-4 h-4" />
-                        Add New Medication
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Time-Slot Filter Pills */}
-                  <div className="flex flex-wrap items-center gap-2 my-4">
-                    {['All', 'Morning', 'Afternoon', 'Evening', 'Night'].map((slot) => (
-                      <button
-                        key={slot}
-                        type="button"
-                        onClick={() => setSlotFilter(slot)}
-                        className={`px-3.5 py-1.5 rounded-full text-xs font-bold cursor-pointer ${
-                          slotFilter === slot
-                            ? 'bg-slate-900 text-white'
-                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                        }`}
-                      >
-                        {slot}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* AI Interaction Report Banner if triggered */}
-                  {interactionReport && (
-                    <div className="mb-6 p-5 rounded-2xl bg-indigo-950 text-white space-y-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <Sparkles className="w-5 h-5 text-amber-300" />
-                          <h3 className="font-extrabold text-base">
-                            Medication Safety & Food Interaction Guardian ({interactionReport.engine})
-                          </h3>
-                        </div>
-                        <span className="px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-xs font-bold">
-                          Safety Score: {interactionReport.overallSafetyScore}/100 • {interactionReport.safetyStatus}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {interactionReport.interactions?.map((it, idx) => (
-                          <div key={idx} className="p-3.5 rounded-xl bg-white/10 border border-white/15 text-xs space-y-1">
-                            <span className="font-extrabold text-amber-300 uppercase">{it.severity} Watch</span>
-                            <p className="font-bold text-white">{it.pair}</p>
-                            <p className="text-indigo-100">{it.explanation}</p>
-                            <p className="text-teal-300 font-semibold pt-1">💡 {it.recommendation}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Full Medication Cards */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {filteredMedications.map((med) => (
-                      <div
-                        key={med.id}
-                        className="p-5 rounded-2xl border border-slate-200 bg-slate-50/50 flex flex-col justify-between gap-4"
-                      >
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="px-3 py-1 rounded-lg bg-teal-800 text-white text-xs font-bold">
-                              {med.scheduledTime} • {med.timeSlot}
-                            </span>
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  speakText(`${med.name} ${med.dosage}. ${med.mealInstruction}. Purpose: ${med.purpose}`)
-                                }
-                                className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-teal-50 cursor-pointer"
-                                title="Read medication aloud"
-                              >
-                                <Volume2 className="w-4 h-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingMed(med);
-                                  setMedModalOpen(true);
-                                }}
-                                className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 cursor-pointer"
-                                title="Edit schedule"
-                              >
-                                <Edit3 className="w-4 h-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteMedication(med.id)}
-                                className="p-1.5 rounded-lg bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 cursor-pointer"
-                                title="Delete medication"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-
-                          <h3 className="text-lg font-extrabold text-slate-900">
-                            {med.name} <span className="text-teal-700">({med.dosage})</span>
-                          </h3>
-                          <p className="text-xs text-slate-600">
-                            <strong>Instruction:</strong> {med.mealInstruction} • <strong>Pill:</strong> {med.pillColor}{' '}
-                            {med.pillShape}
-                          </p>
-                          <p className="text-xs text-slate-600">
-                            <strong>Medical Purpose:</strong> {med.purpose} • <strong>Prescribed By:</strong>{' '}
-                            {med.prescribedBy}
-                          </p>
-                          {med.notes && (
-                            <p className="text-xs text-slate-500 italic">Note: {med.notes}</p>
-                          )}
-                        </div>
-
-                        <div className="pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-slate-600">
-                              Stock: <strong>{med.stockRemaining} pills</strong>
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleRestockMedication(med)}
-                              className="px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 border border-teal-300 text-teal-900 text-[11px] font-bold cursor-pointer"
-                            >
-                              + Refill 30
-                            </button>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            {['taken', 'upcoming', 'missed'].map((st) => (
-                              <button
-                                key={st}
-                                type="button"
-                                onClick={() => handleUpdateMedicationStatus(med.id, st)}
-                                className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase cursor-pointer ${
-                                  med.status === st
-                                    ? st === 'taken'
-                                      ? 'bg-emerald-700 text-white'
-                                      : st === 'missed'
-                                      ? 'bg-rose-700 text-white'
-                                      : 'bg-amber-600 text-white'
-                                    : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-100'
-                                }`}
-                              >
-                                {st}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 3: MEDICAL APPOINTMENTS & HEALTHCARE ROUTINES */}
-            {activeTab === 'appointments' && (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Left 2 Columns: Upcoming Doctor Appointments */}
-                <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h2 className="text-lg font-extrabold text-slate-900">
-                        Upcoming Doctor Appointments & Pre-Visit Preparation
-                      </h2>
-                      <p className="text-xs text-slate-500">
-                        Keep family members informed, export calendar invites, and generate AI clinical summaries
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleGenerateDoctorBrief}
-                        disabled={doctorBriefLoading}
-                        className="px-3.5 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <FileText className="w-4 h-4 text-teal-700" />
-                        {doctorBriefLoading ? 'Generating...' : 'AI Doctor Visit Brief'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingAppt(null);
-                          setApptModalOpen(true);
-                        }}
-                        className="px-3.5 py-2 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Plus className="w-4 h-4" />
-                        New Appointment
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* AI Pre-Appointment Clinical Brief */}
-                  {doctorBrief && (
-                    <div className="p-5 rounded-2xl bg-teal-950 text-white space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-extrabold uppercase tracking-wider text-teal-300">
-                          AI Clinical Handoff Summary for {doctorBrief.targetAppointment}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => window.print()}
-                          className="text-xs font-bold text-amber-300 underline cursor-pointer"
-                        >
-                          Print for Doctor
-                        </button>
-                      </div>
-                      <p className="text-sm font-bold">
-                        Adherence: {doctorBrief.overallAdherenceRate} • {doctorBrief.vitalsSummary}
-                      </p>
-                      <ul className="list-disc list-inside text-xs text-teal-100 space-y-1">
-                        {doctorBrief.keyObservations.map((obs, i) => (
-                          <li key={i}>{obs}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  <div className="space-y-3.5">
-                    {appointments.map((appt) => (
-                      <div
-                        key={appt.id}
-                        className="p-5 rounded-2xl border border-slate-200 bg-slate-50/60 space-y-3"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div>
-                            <span className="text-xs font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
-                              {appt.date} at {appt.time} • {appt.mode}
-                            </span>
-                            <h3 className="text-lg font-extrabold text-slate-900 mt-1">
-                              {appt.doctorName} — <span className="text-indigo-700">{appt.specialty}</span>
-                            </h3>
-                            <p className="text-xs text-slate-600">
-                              📍 {appt.hospital} • Accompanied by: <strong>{appt.accompaniedBy}</strong>
-                            </p>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleToggleAppointmentStatus(appt)}
-                              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer ${
-                                String(appt.status || '').toLowerCase() === 'completed'
-                                  ? 'bg-emerald-700 text-white'
-                                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300'
-                              }`}
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                              {String(appt.status || '').toLowerCase() === 'completed' ? 'Completed' : 'Mark Done'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => downloadAppointmentICS(appt, elderProfile.name)}
-                              className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-bold flex items-center gap-1 cursor-pointer"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                              .ICS Calendar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                handleDispatchEmail('APPOINTMENT_REMINDER', appt.id);
-                                setActiveTab('emails');
-                              }}
-                              className="px-3 py-1.5 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
-                            >
-                              <Mail className="w-3.5 h-3.5" />
-                              Email Reminder
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingAppt(appt);
-                                setApptModalOpen(true);
-                              }}
-                              className="p-1.5 rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 cursor-pointer"
-                              title="Edit appointment"
-                            >
-                              <Edit3 className="w-4 h-4" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteAppointment(appt.id)}
-                              className="p-1.5 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 cursor-pointer"
-                              title="Cancel appointment"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {appt.preparationNotes && (
-                          <p className="text-xs bg-white p-3 rounded-xl border border-slate-200 text-slate-700">
-                            <strong>Checklist:</strong> {appt.preparationNotes}
-                          </p>
-                        )}
-                        {appt.elderQuestions && (
-                          <p className="text-xs bg-teal-50 p-3 rounded-xl border border-teal-200 text-teal-900">
-                            <strong>{elderProfile.preferredName}'s Question for Doctor:</strong> "{appt.elderQuestions}"
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Right Column: Daily Healthcare Routines */}
-                <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
-                  <h2 className="text-lg font-extrabold text-slate-900">
-                    Daily Healthcare Routines
-                  </h2>
-                  <p className="text-xs text-slate-500">
-                    Hydration, mobility exercises, vitals checks & preventive foot care
-                  </p>
-
-                  <form onSubmit={handleAddRoutine} className="flex gap-2">
-                    <input
-                      type="time"
-                      value={newRoutineTime}
-                      onChange={(e) => setNewRoutineTime(e.target.value)}
-                      className="px-2.5 py-2 rounded-xl border border-slate-300 text-xs font-bold"
-                    />
-                    <input
-                      type="text"
-                      value={newRoutineTitle}
-                      onChange={(e) => setNewRoutineTitle(e.target.value)}
-                      placeholder="Add routine (e.g. Evening Walk)"
-                      className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-xs"
-                    />
-                    <button
-                      type="submit"
-                      className="px-3 py-2 rounded-xl bg-teal-700 text-white text-xs font-bold cursor-pointer"
-                    >
-                      Add
-                    </button>
-                  </form>
-
-                  <div className="space-y-2.5">
-                    {routines.map((r) => (
-                      <div
-                        key={r.id}
-                        onClick={() => handleToggleRoutine(r.id, !r.completed)}
-                        className={`p-3.5 rounded-2xl border flex items-start gap-3 cursor-pointer transition ${
-                          r.completed ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={r.completed}
-                          onChange={() => {}}
-                          className="mt-1 w-4 h-4 accent-emerald-700"
-                        />
-                        <div className="flex-1 text-xs">
-                          <p className={`font-bold ${r.completed ? 'line-through text-emerald-800' : 'text-slate-900'}`}>
-                            {r.time} — {r.title}
-                          </p>
-                          <p className="text-slate-500 mt-0.5">{r.notes}</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteRoutine(r.id);
-                          }}
-                          className="p-1 rounded-lg border border-rose-200 bg-white text-rose-600 hover:bg-rose-50 shrink-0 cursor-pointer"
-                          title="Delete routine"
-                          aria-label={`Delete routine ${r.title}`}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 4: PROACTIVE EMAIL REMINDER ENGINE & LIVE OUTBOX INSPECTOR */}
-            {activeTab === 'emails' && (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Left 5 Columns: Trigger Proactive Reminders & Auto-Scanner */}
-                <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-5">
-                  <div>
-                    <span className="text-xs font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-teal-100 text-teal-800">
-                      Core Problem Statement Requirement
-                    </span>
-                    <h2 className="text-xl font-extrabold text-slate-900 mt-1">
-                      Proactive Email Reminder Engine
-                    </h2>
-                    <p className="text-xs text-slate-600 mt-1">
-                      Automatically sends proactive email alerts for missed medications, upcoming doses, and doctor appointments to {elderProfile.preferredName}, family members, and caretakers.
-                    </p>
-                  </div>
-
-                  {/* Live 9:00 AM Auto-Escalation Watcher */}
-                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 text-xs">
-                      <span
-                        className={`w-2.5 h-2.5 rounded-full ${
-                          autoWatcherActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
-                        }`}
-                      />
-                      <div>
-                        <p className="font-extrabold text-slate-900">
-                          Live 9:00 AM Auto-Escalation Watcher:{' '}
-                          <span className={autoWatcherActive ? 'text-emerald-700' : 'text-slate-500'}>
-                            {autoWatcherActive ? 'ACTIVE' : 'PAUSED'}
-                          </span>
-                        </p>
-                        <p className="text-[11px] text-slate-500">
-                          Last check: {lastWatcherCheck} • Alert target: 9553943884pavan@gmail.com
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setAutoWatcherActive((prev) => !prev)}
-                        className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-[11px] font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
-                      >
-                        {autoWatcherActive ? 'Pause' : 'Resume'}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={emailSending}
-                        onClick={() => {
-                          setLastWatcherCheck(new Date().toLocaleTimeString());
-                          handleRunAutoScanReminders();
-                        }}
-                        className="px-2.5 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-[11px] font-bold cursor-pointer"
-                      >
-                        Run Check Now
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Optional Personal Note to Include in Email
-                    </label>
-                    <input
-                      type="text"
-                      value={emailCustomNote}
-                      onChange={(e) => setEmailCustomNote(e.target.value)}
-                      placeholder="e.g. Please call Papa after he takes his 9 AM tablet"
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-2.5">
-                    <button
-                      type="button"
-                      disabled={emailSending}
-                      onClick={handleSimulate9AmMissed}
-                      className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-700 to-rose-600 hover:from-rose-800 hover:to-rose-700 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-                    >
-                      <AlertTriangle className="w-4 h-4" />
-                      {emailSending
-                        ? 'Dispatching Resend + AI Alert...'
-                        : 'Simulate 9:00 AM Missed Dose & Email 9553943884pavan@gmail.com'}
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={emailSending}
-                      onClick={handleRunAutoScanReminders}
-                      className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-teal-700 to-emerald-700 hover:from-teal-800 hover:to-emerald-800 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-                    >
-                      <RefreshCw className={`w-4 h-4 ${emailSending ? 'animate-spin' : ''}`} />
-                      Run Proactive Auto-Scanner (Missed + Upcoming + Appts)
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={emailSending}
-                      onClick={() => handleDispatchEmail('MISSED_MEDICATION')}
-                      className="w-full py-2.5 px-4 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-900 border border-rose-200 font-bold text-xs flex items-center justify-between cursor-pointer"
-                    >
-                      <span>⚠️ Send Missed Medication Alert Email</span>
-                      <Send className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={emailSending}
-                      onClick={() => handleDispatchEmail('UPCOMING_DOSE')}
-                      className="w-full py-2.5 px-4 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 font-bold text-xs flex items-center justify-between cursor-pointer"
-                    >
-                      <span>⏰ Send Upcoming Dose Reminder Email</span>
-                      <Send className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={emailSending}
-                      onClick={() => handleDispatchEmail('APPOINTMENT_REMINDER')}
-                      className="w-full py-2.5 px-4 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 font-bold text-xs flex items-center justify-between cursor-pointer"
-                    >
-                      <span>📅 Send Doctor Appointment Reminder Email</span>
-                      <Send className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={emailSending}
-                      onClick={() => handleDispatchEmail('DAILY_CARE_DIGEST')}
-                      className="w-full py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center justify-between cursor-pointer"
-                    >
-                      <span>💚 Send Daily Care Circle Summary Digest</span>
-                      <Send className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-
-                  {/* Sent Email Log List */}
-                  <div className="pt-4 border-t border-slate-200 space-y-2">
-                    <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
-                      Recent Dispatched Emails ({emailLogs.length})
-                    </h3>
-                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                      {emailLogs.map((log) => (
-                        <div
-                          key={log.id}
-                          onClick={() => setSelectedEmailLog(log)}
-                          className={`p-3 rounded-xl border text-xs cursor-pointer transition ${
-                            selectedEmailLog?.id === log.id
-                              ? 'border-teal-600 bg-teal-50/70'
-                              : 'border-slate-200 bg-slate-50 hover:bg-white'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between font-bold text-slate-800">
-                            <span className="truncate">{log.subject}</span>
-                          </div>
-                          <div className="flex items-center justify-between text-[11px] text-slate-500 mt-1">
-                            <span>To: {log.recipients?.join(', ') || '9553943884pavan@gmail.com'}</span>
-                            <span className="text-emerald-700 font-semibold">
-                              {log.resendId ? `Resend ID: ${log.resendId.slice(0, 12)}...` : log.status}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right 7 Columns: Live Rendered HTML Email Inspector */}
-                <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-6 shadow-xs flex flex-col justify-between space-y-4">
-                  {selectedEmailLog ? (
-                    <>
-                      <div className="border-b border-slate-200 pb-4 space-y-2">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-xs font-extrabold uppercase px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800">
-                            ✓ {selectedEmailLog.status} • {selectedEmailLog.transportMode}
-                          </span>
-                          {selectedEmailLog.resendId && (
-                            <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-full bg-teal-50 text-teal-800 border border-teal-200">
-                              Resend Delivery ID: {selectedEmailLog.resendId}
-                            </span>
-                          )}
-                          {selectedEmailLog.previewUrl && (
-                            <a
-                              href={selectedEmailLog.previewUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-xs font-bold text-teal-700 underline"
-                            >
-                              Open Ethereal SMTP Web Inbox ↗
-                            </a>
-                          )}
-                        </div>
-                        <h3 className="text-base font-extrabold text-slate-900">
-                          {selectedEmailLog.subject}
-                        </h3>
-                        <p className="text-xs text-slate-500">
-                          <strong>Recipients:</strong> {selectedEmailLog.recipients?.join(', ')} •{' '}
-                          <strong>Sent:</strong> {new Date(selectedEmailLog.sentAt).toLocaleTimeString()}
-                        </p>
-                      </div>
-
-                      <div className="flex-1 bg-slate-50 p-4 rounded-2xl border border-slate-200 overflow-x-auto">
-                        <div
-                          dangerouslySetInnerHTML={{ __html: selectedEmailLog.htmlBody }}
-                        />
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-center py-12 text-slate-500 text-sm">
-                      Select an email from the list to inspect its rendered HTML content.
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* TAB 5: GOOGLE GEMINI AI STUDIO & PRESCRIPTION SCANNER */}
-            {activeTab === 'ai-studio' && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Left Column: AI Prescription & Pill Bottle Label Scanner */}
-                <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <span className="text-xs font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-teal-100 text-teal-800">
-                        Google Gemini 3.5 Flash Lite (@google/genai)
-                      </span>
-                      <h2 className="text-xl font-extrabold text-slate-900 mt-1">
-                        AI Prescription & Label Scanner
-                      </h2>
-                      <p className="text-xs text-slate-500">
-                        Upload a photo of a prescription/pill bottle or paste clinical shorthand to auto-populate the senior schedule
-                      </p>
-                    </div>
-                  </div>
-
-                  <form onSubmit={handleScanPrescription} className="space-y-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Doctor's Prescription Note or Shorthand
-                      </label>
-                      <textarea
-                        rows={3}
-                        value={rxText}
-                        onChange={(e) => setRxText(e.target.value)}
-                        placeholder="e.g. Tab Pantoprazole 40mg 1-0-0 Before Breakfast for gastric protection"
-                        className="w-full p-3 rounded-xl border border-slate-300 text-xs"
-                      />
-                    </div>
-
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <label className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center gap-1.5 cursor-pointer">
-                        <Upload className="w-4 h-4 text-teal-700" />
-                        <span>{rxImageBase64 ? 'Image Attached ✓' : 'Attach Prescription Photo'}</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={handleImageUpload}
-                          className="hidden"
-                        />
-                      </label>
-
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setRxText('Tab Pantoprazole 40mg Once Daily 07:00 AM before breakfast')
-                          }
-                          className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
-                        >
-                          Sample Rx 2
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={rxScanning}
-                          className="px-5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Sparkles className="w-4 h-4" />
-                          {rxScanning ? 'Scanning with Gemini...' : 'Extract Schedule with AI'}
-                        </button>
-                      </div>
-                    </div>
-                  </form>
-
-                  {rxScanResult && (
-                    <div className="p-4 rounded-2xl bg-teal-50 border border-teal-200 space-y-3">
-                      <p className="text-xs font-bold text-teal-900">
-                        ✨ {rxScanResult.plainLanguageSummary}
-                      </p>
-                      {rxScanResult.extractedMedications?.map((med, i) => (
-                        <div
-                          key={i}
-                          className="p-3.5 rounded-xl bg-white border border-teal-200 flex items-center justify-between gap-3"
-                        >
-                          <div className="text-xs">
-                            <p className="font-extrabold text-slate-900 text-sm">
-                              {med.name} ({med.dosage}) — {med.scheduledTime}
-                            </p>
-                            <p className="text-slate-600">
-                              {med.mealInstruction} • {med.pillColor} {med.pillShape} • {med.purpose}
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleSaveMedication(med)}
-                            className="px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shrink-0 cursor-pointer"
-                          >
-                            + Add to Schedule
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Right Column: Drug Interaction Guardian & Optional Custom Gemini API Key */}
-                <div className="space-y-6">
-                  <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-extrabold text-slate-900">
-                          AI Drug-Drug & Food Interaction Guardian
-                        </h3>
-                        <p className="text-xs text-slate-500">
-                          Cross-checks {elderProfile.preferredName}'s {medications.length} active prescriptions against chronic conditions & allergies
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleRunInteractionCheck}
-                        disabled={interactionLoading}
-                        className="px-4 py-2 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold cursor-pointer"
-                      >
-                        {interactionLoading ? 'Checking...' : 'Analyze Now'}
-                      </button>
-                    </div>
-
-                    {interactionReport ? (
-                      <div className="space-y-2.5">
-                        {interactionReport.interactions?.map((item, idx) => (
-                          <div
-                            key={idx}
-                            className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="font-extrabold text-slate-900">{item.pair}</span>
-                              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold">
-                                {item.severity}
-                              </span>
-                            </div>
-                            <p className="text-slate-600">{item.explanation}</p>
-                            <p className="text-teal-800 font-semibold">Recommendation: {item.recommendation}</p>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-slate-500 bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                        Click "Analyze Now" to run a full geriatric clinical interaction check across Metformin, Telmisartan, Atorvastatin, and Calcium + Vitamin D3.
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Optional Live Gemini API Key Configuration */}
-                  <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-3">
-                    <h3 className="text-sm font-extrabold text-slate-900">
-                      Google Gemini API Configuration (`@google/genai`)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      The server uses `GEMINI_API_KEY` from `.env` + a built-in geriatric clinical fallback so demos never fail. You can also paste a Gemini API key here for live browser requests:
-                    </p>
-                    <div className="flex gap-2">
-                      <input
-                        type="password"
-                        value={geminiKeyInput}
-                        onChange={(e) => setGeminiKeyInput(e.target.value)}
-                        placeholder="AIzaSy... (Optional — works out-of-the-box without key)"
-                        className="flex-1 px-3.5 py-2 rounded-xl border border-slate-300 text-xs font-mono"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCustomGeminiKey(geminiKeyInput);
-                          showToast('Saved Gemini API key preference');
-                        }}
-                        className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold cursor-pointer"
-                      >
-                        Save Key
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Full-Width Multilingual AI Care Companion & Voice Reminder Broadcaster */}
-                <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <span className="text-xs font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
-                        Voice Reminders &amp; Caregiver Q&amp;A
-                      </span>
-                      <h3 className="text-lg font-extrabold text-slate-900 mt-1">
-                        Multilingual AI Care Companion &amp; Voice Reminder Broadcaster
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Ask contextual medication questions for {elderProfile.preferredName} or broadcast clear voice reminders aloud
-                      </p>
-                    </div>
-                    <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
-                      {['English', 'Hindi', 'Telugu'].map((lang) => (
-                        <button
-                          key={lang}
-                          type="button"
-                          onClick={() => setAiCompanionLang(lang)}
-                          className={`px-3 py-1 rounded-lg text-xs font-extrabold cursor-pointer ${
-                            aiCompanionLang === lang
-                              ? 'bg-indigo-700 text-white'
-                              : 'text-slate-700 hover:bg-white'
-                          }`}
-                        >
-                          {lang}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <form onSubmit={handleAskAiHubCompanion} className="flex flex-col sm:flex-row gap-2.5">
-                    <input
-                      type="text"
-                      value={aiCompanionQuery}
-                      onChange={(e) => setAiCompanionQuery(e.target.value)}
-                      placeholder="Ask about next medicine, food precautions, dizziness, or doctor visit..."
-                      className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold"
-                    />
-                    <button
-                      type="submit"
-                      disabled={aiCompanionLoading || !aiCompanionQuery.trim()}
-                      className="px-5 py-2.5 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                    >
-                      <Sparkles className="w-4 h-4" />
-                      {aiCompanionLoading ? 'Generating...' : 'Ask Gemini Companion'}
-                    </button>
-                  </form>
-
-                  {aiCompanionReply && (
-                    <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                      <div className="space-y-1">
-                        <p className="text-[11px] font-extrabold uppercase text-indigo-800">
-                          {aiCompanionReply.engine || 'KinCare AI Companion'} ({aiCompanionLang})
-                        </p>
-                        <p className="text-sm text-slate-900 font-semibold leading-relaxed">
-                          {aiCompanionReply.reply}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          speakText(
-                            aiCompanionReply.reply,
-                            aiCompanionLang === 'Hindi'
-                              ? 'hi-IN'
-                              : aiCompanionLang === 'Telugu'
-                                ? 'te-IN'
-                                : 'en-IN'
-                          )
-                        }
-                        className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 shrink-0 cursor-pointer"
-                      >
-                        <Volume2 className="w-4 h-4" />
-                        Broadcast Voice Reminder
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+              {activeTab === 'ai-studio' && (
+                <AiStudioTab
+                  elderProfile={elderProfile}
+                  medications={medications}
+                  rxText={rxText}
+                  setRxText={setRxText}
+                  rxImageBase64={rxImageBase64}
+                  rxScanning={rxScanning}
+                  rxScanResult={rxScanResult}
+                  interactionLoading={interactionLoading}
+                  interactionReport={interactionReport}
+                  geminiKeyInput={geminiKeyInput}
+                  setGeminiKeyInput={setGeminiKeyInput}
+                  aiCompanionLang={aiCompanionLang}
+                  setAiCompanionLang={setAiCompanionLang}
+                  aiCompanionQuery={aiCompanionQuery}
+                  setAiCompanionQuery={setAiCompanionQuery}
+                  aiCompanionLoading={aiCompanionLoading}
+                  aiCompanionReply={aiCompanionReply}
+                  onScanPrescription={handleScanPrescription}
+                  onImageUpload={handleImageUpload}
+                  onSaveMedication={handleSaveMedication}
+                  onRunInteractionCheck={handleRunInteractionCheck}
+                  onAskAiHubCompanion={handleAskAiHubCompanion}
+                  showToast={showToast}
+                />
+              )}
+            </Suspense>
           </div>
         )}
       </main>
 
-      {/* Footer */}
       <footer className="bg-white border-t border-slate-200 py-4 px-6 text-xs text-slate-500 mt-12">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <p>
-            <strong>KinCare AI</strong> — Built for <strong>PromptWars x Catalyst (Build with AI)</strong> • Elderly Individuals at the Centre of Care
+            <strong>KinCare AI</strong> — Built for <strong>PromptWars x Catalyst (Build with AI)</strong> •
+            Elderly Individuals at the Centre of Care
           </p>
           <p className="text-slate-400">
-            Passcode Protected • WCAG Senior Accessible • Google Gemini SDK & Cloud Run Ready
+            Passcode Protected • WCAG Senior Accessible • Google Gemini SDK &amp; Cloud Run Ready
           </p>
         </div>
       </footer>
 
-      {/* Lazy-Loaded Modals */}
       <Suspense fallback={null}>
         {passcodeModalOpen && (
           <PasscodeModal

@@ -10,7 +10,7 @@
     "build": "vite build",
     "start": "node server/index.js",
     "test": "vitest run",
-    "lint": "node --check server/index.js && node --check server/app.js && node --check server/data/store.js && node --check server/data/seedData.js && node --check server/security/passcodeAuth.js"
+    "lint": "node --check server/index.js && node --check server/app.js && node --check server/middleware/auth.js && node --check server/schemas/validation.js && node --check server/routes/careRoutes.js && node --check server/routes/aiAndReminderRoutes.js && node --check server/data/store.js && node --check server/data/seedData.js && node --check server/security/passcodeAuth.js && node --check server/services/geminiService.js && node --check server/services/emailService.js"
   },
   "keywords": [
     "elderly-care",
