@@ -197,14 +197,10 @@ export default function App() {
     });
     setStoredToken(res.token);
     setActiveMember(res.member);
-    setIsAuthenticated(true);
-    if (res.member.role === 'elder') {
-      setViewMode('comfort');
-    } else {
-      setViewMode('command');
-    }
-    showToast(`Signed in as ${res.member.name} (${res.member.roleLabel})`);
+    setViewMode(res.member.role === 'elder' ? 'comfort' : 'command');
     await fetchDashboardData();
+    setIsAuthenticated(true);
+    showToast(`Signed in as ${res.member.name} (${res.member.roleLabel})`);
   };
 
   const handleDemoLogin = async (memberId, role) => {
@@ -214,14 +210,10 @@ export default function App() {
     });
     setStoredToken(res.token);
     setActiveMember(res.member);
-    setIsAuthenticated(true);
-    if (res.member.role === 'elder') {
-      setViewMode('comfort');
-    } else {
-      setViewMode('command');
-    }
-    showToast(`Signed in (Demo) as ${res.member.name} (${res.member.roleLabel})`);
+    setViewMode(res.member.role === 'elder' ? 'comfort' : 'command');
     await fetchDashboardData();
+    setIsAuthenticated(true);
+    showToast(`Signed in (Demo) as ${res.member.name} (${res.member.roleLabel})`);
   };
 
   const handleSignup = async (signupForm) => {
@@ -231,14 +223,10 @@ export default function App() {
     });
     setStoredToken(res.token);
     setActiveMember(res.member);
-    setIsAuthenticated(true);
-    if (res.member.role === 'elder') {
-      setViewMode('comfort');
-    } else {
-      setViewMode('command');
-    }
-    showToast(`Account created! Welcome to KinCare AI, ${res.member.name}`);
+    setViewMode(res.member.role === 'elder' ? 'comfort' : 'command');
     await fetchDashboardData();
+    setIsAuthenticated(true);
+    showToast(`Account created! Welcome to KinCare AI, ${res.member.name}`);
   };
 
   const handleSignOut = async () => {
@@ -660,13 +648,17 @@ export default function App() {
   };
 
   const handleQuickRoleSwitch = async (targetRole) => {
+    if (activeMember?.role === targetRole) {
+      setViewMode(targetRole === 'elder' ? 'comfort' : 'command');
+      return;
+    }
     const member = careCircleMembers.find((m) => m.role === targetRole);
-    if (!member || !dashboard?.demoMode) {
+    if (!dashboard?.demoMode) {
       setPasscodeModalOpen(true);
       return;
     }
     try {
-      await handleDemoLogin(member.id, targetRole);
+      await handleDemoLogin(member?.id, targetRole);
     } catch {
       setPasscodeModalOpen(true);
     }
@@ -813,7 +805,7 @@ export default function App() {
   const filteredMedications =
     slotFilter === 'All' ? medications : medications.filter((m) => m.timeSlot === slotFilter);
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated || !elderProfile) {
     return (
       <div className={highContrast ? 'high-contrast-mode' : ''}>
         {toastBanner && (

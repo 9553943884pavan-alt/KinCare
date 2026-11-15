@@ -253,9 +253,13 @@ export function createApp() {
 
     if (memberId) {
       matchedMember = store.careCircleMembers.find((m) => m.id === memberId);
-    } else if (role) {
+    }
+    if (!matchedMember && role) {
       const normalizedRole = role === 'caregiver' ? 'caretaker' : role;
       matchedMember = store.careCircleMembers.find((m) => m.role === normalizedRole);
+    }
+    if (!matchedMember && !memberId && !role) {
+      matchedMember = store.careCircleMembers[0];
     }
 
     if (!matchedMember) {
