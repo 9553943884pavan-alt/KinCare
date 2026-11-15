@@ -283,4 +283,76 @@ describe('KinCare AI — Elderly Care & Medication Management Platform API', () 
     expect(delMemberRes.body.deleted).toBe(true);
     expect(delMemberRes.body.id).toBe(memberId);
   });
+
+  it('restores stock on medication undo, escapes HTML in emails, survives empty arrays, and sanitizes vitals/profile sync', async () => {
+    const dashBefore = await request(app).get('/api/dashboard');
+    const med = dashBefore.body.medications.find((m) => m.status === 'upcoming');
+    const initialStock = med.stockRemaining;
+
+    // 1. Taking reduces stock by 1, undoing back to upcoming restores stock by +1 and syncs adherenceHistory
+    const takeRes = await request(app)
+      .put(`/api/medications/${med.id}`)
+      .send({ status: 'taken', actorName: 'Ramesh Sharma', actorRole: 'elder' });
+    expect(takeRes.status).toBe(200);
+    expect(takeRes.body.medication.stockRemaining).toBe(initialStock - 1);
+    expect(takeRes.body.medication.actorName).toBeUndefined();
+
+    const undoRes = await request(app)
+      .put(`/api/medications/${med.id}`)
+      .send({ status: 'upcoming', actorName: 'Ramesh Sharma' });
+    expect(undoRes.status).toBe(200);
+    expect(undoRes.body.medication.stockRemaining).toBe(initialStock);
+
+    // 2. HTML escaping in proactive email body
+    const xssRes = await request(app)
+      .post('/api/reminders/send')
+      .send({
+        type: 'UPCOMING_DOSE',
+        customNote: '<script>alert("xss")</script> Drink warm water',
+      });
+    expect(xssRes.status).toBe(201);
+    expect(xssRes.body.emailLog.htmlBody).not.toContain('<script>');
+    expect(xssRes.body.emailLog.htmlBody).toContain('&lt;script&gt;');
+
+    // 3. Profile sync & non-numeric vitals sanitization
+    const profRes = await request(app)
+      .put('/api/elder-profile')
+      .send({ name: 'Mohan Verma', emergencyPhone: '+91 99999 88888' });
+    expect(profRes.status).toBe(200);
+    const syncedDash = await request(app).get('/api/dashboard');
+    const elderMember = syncedDash.body.careCircleMembers.find((m) => m.role === 'elder');
+    expect(elderMember.name).toBe('Mohan Verma');
+    expect(elderMember.phone).toBe('+91 99999 88888');
+
+    const badVitals = await request(app)
+      .post('/api/vitals')
+      .send({ systolic: 'not-a-number', diastolic: '', heartRate: -5, bloodSugarMgDl: 'abc' });
+    expect(badVitals.status).toBe(201);
+    expect(Number.isFinite(badVitals.body.vital.systolic)).toBe(true);
+    expect(badVitals.body.vital.systolic).toBe(125);
+    expect(badVitals.body.vital.bloodSugarMgDl).toBe(110);
+
+    // 4. Deleting all medications and appointments still allows SOS and AI companion doctor query
+    for (const m of syncedDash.body.medications) {
+      await request(app).delete(`/api/medications/${m.id}`);
+    }
+    for (const a of syncedDash.body.appointments) {
+      await request(app).delete(`/api/appointments/${a.id}`);
+    }
+
+    const emptySosRes = await request(app).post('/api/sos').send({});
+    expect(emptySosRes.status).toBe(201);
+    expect(emptySosRes.body.sosDispatched).toBe(true);
+
+    const emptyApptChat = await request(app)
+      .post('/api/ai/companion')
+      .send({ message: 'When is my next doctor appointment?', language: 'English' });
+    expect(emptyApptChat.status).toBe(200);
+    expect(emptyApptChat.body.reply).toContain('no upcoming doctor appointments');
+
+    // 5. Unknown API route returns JSON 404
+    const notFoundRes = await request(app).get('/api/does-not-exist');
+    expect(notFoundRes.status).toBe(404);
+    expect(notFoundRes.body.error).toBe('API endpoint not found');
+  });
 });

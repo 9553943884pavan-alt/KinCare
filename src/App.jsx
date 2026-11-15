@@ -112,33 +112,44 @@ export default function App() {
   const [aiCompanionReply, setAiCompanionReply] = useState(null);
   const [aiCompanionLoading, setAiCompanionLoading] = useState(false);
 
-  const showToast = (title, type = 'success') => {
+  const showToast = useCallback((title, type = 'success') => {
     setToastBanner({ title, type });
     setTimeout(() => setToastBanner(null), 4500);
-  };
+  }, []);
 
   const fetchDashboardData = useCallback(async () => {
     try {
       const data = await apiFetch('/api/dashboard');
       setDashboard(data);
       if (data.authenticatedMember && getStoredToken()) {
-        if (!isAuthenticated) {
-          setActiveMember(data.authenticatedMember);
-          setIsAuthenticated(true);
-          setViewMode(data.authenticatedMember.role === 'elder' ? 'comfort' : 'command');
+        setActiveMember(data.authenticatedMember);
+        setIsAuthenticated((prev) => {
+          if (!prev) {
+            setViewMode(data.authenticatedMember.role === 'elder' ? 'comfort' : 'command');
+          }
+          return true;
+        });
+      } else {
+        setActiveMember((prev) => {
+          if (prev && data.careCircleMembers?.some((m) => m.id === prev.id)) {
+            return data.careCircleMembers.find((m) => m.id === prev.id);
+          }
+          return data.careCircleMembers?.[0] || null;
+        });
+      }
+      setSelectedEmailLog((prev) => {
+        if (!data.emailLogs?.length) return null;
+        if (prev) {
+          return data.emailLogs.find((l) => l.id === prev.id) || data.emailLogs[0];
         }
-      } else if (!activeMember && data.careCircleMembers?.length > 0) {
-        setActiveMember(data.careCircleMembers[0]);
-      }
-      if (!selectedEmailLog && data.emailLogs?.length > 0) {
-        setSelectedEmailLog(data.emailLogs[0]);
-      }
+        return data.emailLogs[0];
+      });
     } catch (err) {
       showToast(err.message || 'Failed to load dashboard data', 'error');
     } finally {
       setLoading(false);
     }
-  }, [activeMember, selectedEmailLog, isAuthenticated]);
+  }, [showToast]);
 
   useEffect(() => {
     fetchDashboardData();
@@ -209,220 +220,291 @@ export default function App() {
   };
 
   const handleToggleMemberNotify = async (memberId, field, nextVal) => {
-    await apiFetch(`/api/care-circle/members/${memberId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ [field]: nextVal }),
-    });
-    showToast('Updated Care Circle notification preference');
-    await fetchDashboardData();
+    try {
+      await apiFetch(`/api/care-circle/members/${memberId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ [field]: nextVal }),
+      });
+      showToast('Updated Care Circle notification preference');
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to update notification preference', 'error');
+    }
   };
 
   const handleDeleteCareMember = async (memberId) => {
-    await apiFetch(`/api/care-circle/members/${memberId}`, { method: 'DELETE' });
-    showToast('Removed member from Care Circle');
-    await fetchDashboardData();
+    try {
+      await apiFetch(`/api/care-circle/members/${memberId}`, { method: 'DELETE' });
+      showToast('Removed member from Care Circle');
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to remove Care Circle member', 'error');
+    }
   };
 
   const handleSaveElderProfile = async (profilePayload) => {
-    await apiFetch('/api/elder-profile', {
-      method: 'PUT',
-      body: JSON.stringify(profilePayload),
-    });
-    setElderProfileModalOpen(false);
-    showToast(`Saved patient profile for ${profilePayload.name}`);
-    await fetchDashboardData();
+    try {
+      await apiFetch('/api/elder-profile', {
+        method: 'PUT',
+        body: JSON.stringify(profilePayload),
+      });
+      setElderProfileModalOpen(false);
+      showToast(`Saved patient profile for ${profilePayload.name}`);
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to save patient profile', 'error');
+    }
   };
 
   const handleRestockMedication = async (med) => {
-    const nextStock = (Number(med.stockRemaining) || 0) + 30;
-    await apiFetch(`/api/medications/${med.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        stockRemaining: nextStock,
-        actorName: activeMember?.name || 'Care Circle',
-        actorRole: activeMember?.role || 'family',
-      }),
-    });
-    showToast(`Refilled ${med.name}: ${nextStock} pills in stock`);
-    await fetchDashboardData();
+    try {
+      const nextStock = (Number(med.stockRemaining) || 0) + 30;
+      await apiFetch(`/api/medications/${med.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          stockRemaining: nextStock,
+          actorName: activeMember?.name || 'Care Circle',
+          actorRole: activeMember?.role || 'family',
+        }),
+      });
+      showToast(`Refilled ${med.name}: ${nextStock} pills in stock`);
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to refill medication', 'error');
+    }
   };
 
   const handleSnoozeMedication = async (med) => {
-    await apiFetch(`/api/medications/${med.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        snoozedUntil: '15 mins',
-        notes: 'Snoozed 15 minutes from Senior Voice Reminder',
-        actorName: dashboard?.elderProfile?.name || 'Senior',
-        actorRole: 'elder',
-      }),
-    });
-    showToast(`Snoozed ${med.name} reminder for 15 minutes`);
-    await fetchDashboardData();
+    try {
+      await apiFetch(`/api/medications/${med.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          status: 'upcoming',
+          snoozedUntil: '15 mins',
+          actorName: dashboard?.elderProfile?.name || 'Senior',
+          actorRole: 'elder',
+        }),
+      });
+      showToast(`Snoozed ${med.name} reminder for 15 minutes`);
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to snooze medication reminder', 'error');
+    }
   };
 
   const handleToggleAppointmentStatus = async (appt) => {
-    const nextStatus = appt.status === 'completed' ? 'Scheduled' : 'completed';
-    await apiFetch(`/api/appointments/${appt.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ status: nextStatus }),
-    });
-    showToast(`Marked appointment with ${appt.doctorName} as ${nextStatus}`);
-    await fetchDashboardData();
+    try {
+      const isCompleted = String(appt.status || '').toLowerCase() === 'completed';
+      const nextStatus = isCompleted ? 'Scheduled' : 'Completed';
+      await apiFetch(`/api/appointments/${appt.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          status: nextStatus,
+          actorName: activeMember?.name || 'Care Circle',
+        }),
+      });
+      showToast(`Marked appointment with ${appt.doctorName} as ${nextStatus}`);
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to update appointment status', 'error');
+    }
   };
 
   const handleSaveAppointmentQuestion = async (appt, elderQuestions) => {
-    await apiFetch(`/api/appointments/${appt.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ elderQuestions }),
-    });
-    showToast(`Saved question for ${appt.doctorName}`);
-    await fetchDashboardData();
+    try {
+      await apiFetch(`/api/appointments/${appt.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          elderQuestions,
+          actorName: dashboard?.elderProfile?.name || 'Senior',
+        }),
+      });
+      showToast(`Saved question for ${appt.doctorName}`);
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to save doctor question', 'error');
+    }
   };
 
   // Medication CRUD & Adherence
   const handleSaveMedication = async (medPayload) => {
-    if (editingMed) {
-      await apiFetch(`/api/medications/${editingMed.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          ...medPayload,
-          actorName: activeMember?.name,
-          actorRole: activeMember?.role,
-        }),
-      });
-      showToast(`Updated schedule for ${medPayload.name}`);
-    } else {
-      await apiFetch('/api/medications', {
-        method: 'POST',
-        body: JSON.stringify({
-          ...medPayload,
-          actorName: activeMember?.name,
-          actorRole: activeMember?.role,
-        }),
-      });
-      showToast(`Added ${medPayload.name} (${medPayload.dosage}) to daily schedule`);
+    try {
+      if (editingMed) {
+        await apiFetch(`/api/medications/${editingMed.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            ...medPayload,
+            actorName: activeMember?.name,
+            actorRole: activeMember?.role,
+          }),
+        });
+        showToast(`Updated schedule for ${medPayload.name}`);
+      } else {
+        await apiFetch('/api/medications', {
+          method: 'POST',
+          body: JSON.stringify({
+            ...medPayload,
+            actorName: activeMember?.name,
+            actorRole: activeMember?.role,
+          }),
+        });
+        showToast(`Added ${medPayload.name} (${medPayload.dosage}) to daily schedule`);
+      }
+      setMedModalOpen(false);
+      setEditingMed(null);
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to save medication', 'error');
     }
-    setMedModalOpen(false);
-    setEditingMed(null);
-    await fetchDashboardData();
   };
 
   const handleUpdateMedicationStatus = async (medId, status) => {
-    const res = await apiFetch(`/api/medications/${medId}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        status,
-        actorName: activeMember?.name || dashboard?.elderProfile?.name,
-        actorRole: activeMember?.role || 'elder',
-      }),
-    });
-    if (res.autoEmailDispatched) {
-      setSelectedEmailLog(res.autoEmailDispatched);
-      showToast(
-        `Marked as Missed — Proactive Email Alert automatically sent to Care Circle!`,
-        'warning'
-      );
-    } else {
-      showToast(`Medication status updated to ${status.toUpperCase()}`);
+    try {
+      const res = await apiFetch(`/api/medications/${medId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          status,
+          actorName: activeMember?.name || dashboard?.elderProfile?.name,
+          actorRole: activeMember?.role || 'elder',
+        }),
+      });
+      if (res.autoEmailDispatched) {
+        setSelectedEmailLog(res.autoEmailDispatched);
+        showToast(
+          `Marked as Missed — Proactive Email Alert automatically sent to Care Circle!`,
+          'warning'
+        );
+      } else {
+        showToast(`Medication status updated to ${status.toUpperCase()}`);
+      }
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to update medication status', 'error');
     }
-    await fetchDashboardData();
   };
 
   const handleDeleteMedication = async (medId) => {
-    await apiFetch(`/api/medications/${medId}?actorName=${encodeURIComponent(activeMember?.name || 'Care Circle')}`, {
-      method: 'DELETE',
-    });
-    showToast('Medication removed from schedule');
-    await fetchDashboardData();
+    try {
+      await apiFetch(`/api/medications/${medId}?actorName=${encodeURIComponent(activeMember?.name || 'Care Circle')}`, {
+        method: 'DELETE',
+      });
+      showToast('Medication removed from schedule');
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to remove medication', 'error');
+    }
   };
 
   // Routine Handlers
   const handleToggleRoutine = async (routineId, completed) => {
-    await apiFetch(`/api/routines/${routineId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        completed,
-        actorName: activeMember?.name || dashboard?.elderProfile?.name,
-      }),
-    });
-    await fetchDashboardData();
+    try {
+      await apiFetch(`/api/routines/${routineId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          completed,
+          actorName: activeMember?.name || dashboard?.elderProfile?.name,
+        }),
+      });
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to update routine', 'error');
+    }
   };
 
   const handleAddRoutine = async (e) => {
     e.preventDefault();
     if (!newRoutineTitle.trim()) return;
-    await apiFetch('/api/routines', {
-      method: 'POST',
-      body: JSON.stringify({
-        title: newRoutineTitle,
-        time: newRoutineTime,
-        category: 'Daily Care',
-        actorName: activeMember?.name,
-      }),
-    });
-    setNewRoutineTitle('');
-    showToast('Added new daily healthcare routine');
-    await fetchDashboardData();
+    try {
+      await apiFetch('/api/routines', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: newRoutineTitle,
+          time: newRoutineTime,
+          category: 'Daily Care',
+          actorName: activeMember?.name,
+        }),
+      });
+      setNewRoutineTitle('');
+      showToast('Added new daily healthcare routine');
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to add routine', 'error');
+    }
   };
 
   const handleDeleteRoutine = async (routineId) => {
-    await apiFetch(`/api/routines/${routineId}`, { method: 'DELETE' });
-    showToast('Removed daily healthcare routine');
-    await fetchDashboardData();
+    try {
+      await apiFetch(`/api/routines/${routineId}`, { method: 'DELETE' });
+      showToast('Removed daily healthcare routine');
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to remove routine', 'error');
+    }
   };
 
   // Appointment Handlers
   const handleSaveAppointment = async (apptPayload) => {
-    if (editingAppt) {
-      await apiFetch(`/api/appointments/${editingAppt.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          ...apptPayload,
-          actorName: activeMember?.name,
-        }),
-      });
-      showToast(`Updated appointment with ${apptPayload.doctorName}`);
-    } else {
-      await apiFetch('/api/appointments', {
-        method: 'POST',
-        body: JSON.stringify({
-          ...apptPayload,
-          actorName: activeMember?.name,
-        }),
-      });
-      showToast(`Scheduled appointment with ${apptPayload.doctorName}`);
+    try {
+      if (editingAppt) {
+        await apiFetch(`/api/appointments/${editingAppt.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            ...apptPayload,
+            actorName: activeMember?.name,
+          }),
+        });
+        showToast(`Updated appointment with ${apptPayload.doctorName}`);
+      } else {
+        await apiFetch('/api/appointments', {
+          method: 'POST',
+          body: JSON.stringify({
+            ...apptPayload,
+            actorName: activeMember?.name,
+          }),
+        });
+        showToast(`Scheduled appointment with ${apptPayload.doctorName}`);
+      }
+      setApptModalOpen(false);
+      setEditingAppt(null);
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to save appointment', 'error');
     }
-    setApptModalOpen(false);
-    setEditingAppt(null);
-    await fetchDashboardData();
   };
 
   const handleDeleteAppointment = async (apptId) => {
-    await apiFetch(`/api/appointments/${apptId}`, { method: 'DELETE' });
-    showToast('Appointment cancelled');
-    await fetchDashboardData();
+    try {
+      await apiFetch(`/api/appointments/${apptId}`, { method: 'DELETE' });
+      showToast('Appointment cancelled');
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to cancel appointment', 'error');
+    }
   };
 
   // Autonomy & Vitals Handlers
   const handleCreateProposal = async (e) => {
     e.preventDefault();
     if (!proposalTitle.trim()) return;
-    await apiFetch('/api/autonomy', {
-      method: 'POST',
-      body: JSON.stringify({
-        proposedBy: activeMember
-          ? `${activeMember.name} (${activeMember.role === 'caretaker' ? 'Caregiver' : activeMember.role})`
-          : 'Family Member',
-        title: proposalTitle.trim(),
-        reason:
-          proposalReason.trim() || 'Proposed in Care Circle portal for elderly confirmation.',
-      }),
-    });
-    setProposalTitle('');
-    setProposalReason('');
-    showToast('Sent schedule proposal to Elderly Person for 1-tap approval');
-    await fetchDashboardData();
+    try {
+      await apiFetch('/api/autonomy', {
+        method: 'POST',
+        body: JSON.stringify({
+          proposedBy: activeMember
+            ? `${activeMember.name} (${activeMember.role === 'caretaker' ? 'Caregiver' : activeMember.role})`
+            : 'Family Member',
+          title: proposalTitle.trim(),
+          reason:
+            proposalReason.trim() || 'Proposed in Care Circle portal for elderly confirmation.',
+        }),
+      });
+      setProposalTitle('');
+      setProposalReason('');
+      showToast('Sent schedule proposal to Elderly Person for 1-tap approval');
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to send autonomy proposal', 'error');
+    }
   };
 
   const handleSubmitCommandVitals = async (e) => {
@@ -437,30 +519,42 @@ export default function App() {
     });
   };
   const handleResolveAutonomy = async (decisionId, status, elderResponseNote) => {
-    await apiFetch(`/api/autonomy/${decisionId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status, elderResponseNote }),
-    });
-    showToast(`Autonomy decision recorded: ${status.replace(/_/g, ' ')}`);
-    await fetchDashboardData();
+    try {
+      await apiFetch(`/api/autonomy/${decisionId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, elderResponseNote }),
+      });
+      showToast(`Autonomy decision recorded: ${status.replace(/_/g, ' ')}`);
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to record autonomy decision', 'error');
+    }
   };
 
   const handleUpdateAutonomyPrefs = async (prefs) => {
-    await apiFetch('/api/elder-profile/autonomy', {
-      method: 'PUT',
-      body: JSON.stringify(prefs),
-    });
-    showToast('Updated Elder Autonomy & Sharing Preferences');
-    await fetchDashboardData();
+    try {
+      await apiFetch('/api/elder-profile/autonomy', {
+        method: 'PUT',
+        body: JSON.stringify(prefs),
+      });
+      showToast('Updated Elder Autonomy & Sharing Preferences');
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to update preferences', 'error');
+    }
   };
 
   const handleLogVitals = async (vitalPayload) => {
-    await apiFetch('/api/vitals', {
-      method: 'POST',
-      body: JSON.stringify(vitalPayload),
-    });
-    showToast('Logged new Blood Pressure, Sugar & Mood reading');
-    await fetchDashboardData();
+    try {
+      await apiFetch('/api/vitals', {
+        method: 'POST',
+        body: JSON.stringify(vitalPayload),
+      });
+      showToast('Logged new Blood Pressure, Sugar & Mood reading');
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to log vitals', 'error');
+    }
   };
 
   // Proactive Email Dispatch Handlers
@@ -480,6 +574,8 @@ export default function App() {
       setEmailCustomNote('');
       showToast(`Proactive Email Sent: ${res.emailLog.subject}`);
       await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to dispatch proactive email', 'error');
     } finally {
       setEmailSending(false);
     }
@@ -494,6 +590,8 @@ export default function App() {
       }
       showToast(`Proactive Auto-Scan dispatched ${res.dispatchedCount} email reminders!`);
       await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to run auto-scan reminders', 'error');
     } finally {
       setEmailSending(false);
     }
@@ -542,16 +640,20 @@ export default function App() {
   };
 
   const handleTriggerSOS = async () => {
-    const res = await apiFetch('/api/sos', {
-      method: 'POST',
-      body: JSON.stringify({
-        reason: `${dashboard?.elderProfile?.preferredName} requested immediate Care Circle check-in.`,
-      }),
-    });
-    setSelectedEmailLog(res.emailLog);
-    speakText('Emergency S O S alert has been sent to Priya and Nurse Anita.');
-    showToast('🚨 Emergency SOS Alert Dispatched to All Care Circle Members!', 'error');
-    await fetchDashboardData();
+    try {
+      const res = await apiFetch('/api/sos', {
+        method: 'POST',
+        body: JSON.stringify({
+          reason: `${dashboard?.elderProfile?.preferredName} requested immediate Care Circle check-in.`,
+        }),
+      });
+      setSelectedEmailLog(res.emailLog);
+      speakText('Emergency S O S alert has been sent to Priya and Nurse Anita.');
+      showToast('🚨 Emergency SOS Alert Dispatched to All Care Circle Members!', 'error');
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to send SOS alert', 'error');
+    }
   };
 
   // Gemini AI Handlers
@@ -561,6 +663,8 @@ export default function App() {
       const res = await apiFetch('/api/ai/interactions', { method: 'POST', body: JSON.stringify({}) });
       setInteractionReport(res);
       showToast('Completed Gemini AI Drug-Drug & Food Interaction Analysis');
+    } catch (err) {
+      showToast(err.message || 'Failed to analyze medication interactions', 'error');
     } finally {
       setInteractionLoading(false);
     }
@@ -579,6 +683,8 @@ export default function App() {
       });
       setRxScanResult(res);
       showToast('Prescription analyzed by Gemini AI!');
+    } catch (err) {
+      showToast(err.message || 'Failed to scan prescription', 'error');
     } finally {
       setRxScanning(false);
     }
@@ -601,16 +707,23 @@ export default function App() {
       const res = await apiFetch('/api/ai/doctor-brief', { method: 'POST', body: JSON.stringify({}) });
       setDoctorBrief(res);
       showToast('Generated Clinical Doctor Visit Brief');
+    } catch (err) {
+      showToast(err.message || 'Failed to generate doctor visit brief', 'error');
     } finally {
       setDoctorBriefLoading(false);
     }
   };
 
   const handleAskCompanion = async (message, language = 'English') => {
-    return apiFetch('/api/ai/companion', {
-      method: 'POST',
-      body: JSON.stringify({ message, language }),
-    });
+    try {
+      return await apiFetch('/api/ai/companion', {
+        method: 'POST',
+        body: JSON.stringify({ message, language }),
+      });
+    } catch (err) {
+      showToast(err.message || 'AI Care Companion is unavailable right now', 'error');
+      return { reply: 'Sorry, I could not reach the Care Companion right now. Please try again shortly.' };
+    }
   };
 
   const handleAskAiHubCompanion = async (e) => {
@@ -627,9 +740,13 @@ export default function App() {
   };
 
   const handleResetDemo = async () => {
-    await apiFetch('/api/reset-demo', { method: 'POST' });
-    showToast('Demo data reset to clean initial state');
-    await fetchDashboardData();
+    try {
+      await apiFetch('/api/reset-demo', { method: 'POST' });
+      showToast('Demo data reset to clean initial state');
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to reset demo data', 'error');
+    }
   };
 
   if (loading || !dashboard) {
@@ -1840,13 +1957,13 @@ export default function App() {
                               type="button"
                               onClick={() => handleToggleAppointmentStatus(appt)}
                               className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer ${
-                                appt.status === 'completed'
+                                String(appt.status || '').toLowerCase() === 'completed'
                                   ? 'bg-emerald-700 text-white'
                                   : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300'
                               }`}
                             >
                               <Check className="w-3.5 h-3.5" />
-                              {appt.status === 'completed' ? 'Completed' : 'Mark Done'}
+                              {String(appt.status || '').toLowerCase() === 'completed' ? 'Completed' : 'Mark Done'}
                             </button>
                             <button
                               type="button"

@@ -81,11 +81,14 @@ export function downloadAppointmentICS(appt, elderName) {
     'END:VCALENDAR',
   ].join('\r\n');
 
+  const safeDoctorSlug = String(appt?.doctorName || 'Doctor')
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-|-$/g, '') || 'Doctor';
   const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `KinCare-Appointment-${appt.doctorName.replace(/\s+/g, '-')}.ics`;
+  a.download = `KinCare-Appointment-${safeDoctorSlug}.ics`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -115,6 +118,11 @@ export function playReminderChime() {
       osc.start(ctx.currentTime + idx * 0.18);
       osc.stop(ctx.currentTime + idx * 0.18 + 0.36);
     });
+    setTimeout(() => {
+      if (ctx && typeof ctx.close === 'function') {
+        ctx.close().catch(() => {});
+      }
+    }, 800);
     return true;
   } catch {
     return false;

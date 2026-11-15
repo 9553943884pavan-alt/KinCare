@@ -26,16 +26,21 @@ export function hashPasscode(passcode, salt = crypto.randomBytes(16).toString('h
  * @returns {boolean}
  */
 export function verifyPasscode(passcode, storedHash) {
-  if (!passcode || !storedHash || !storedHash.includes(':')) return false;
+  if (!passcode || typeof storedHash !== 'string' || !storedHash.includes(':')) return false;
   const [salt, originalHash] = storedHash.split(':');
-  const candidateHash = crypto
-    .pbkdf2Sync(String(passcode).trim(), salt, PBKDF2_ITERATIONS, KEYLEN, DIGEST)
-    .toString('hex');
+  if (!salt || !originalHash) return false;
+  try {
+    const candidateHash = crypto
+      .pbkdf2Sync(String(passcode).trim(), salt, PBKDF2_ITERATIONS, KEYLEN, DIGEST)
+      .toString('hex');
 
-  const a = Buffer.from(originalHash, 'hex');
-  const b = Buffer.from(candidateHash, 'hex');
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
+    const a = Buffer.from(originalHash, 'hex');
+    const b = Buffer.from(candidateHash, 'hex');
+    if (a.length === 0 || a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -62,6 +67,7 @@ export function signSessionToken(payload) {
 export function verifySessionToken(token) {
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
   const [encoded, signature] = token.split('.');
+  if (!encoded || !signature) return null;
   const expectedSig = crypto.createHmac('sha256', SECRET).update(encoded).digest('base64url');
 
   const a = Buffer.from(signature);

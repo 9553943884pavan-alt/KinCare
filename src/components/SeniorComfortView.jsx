@@ -108,15 +108,22 @@ export default function SeniorComfortView({
   const spotlightMedication = useMemo(() => {
     const overdue = medications.find((m) => m.status === 'overdue' || m.status === 'missed');
     if (overdue) return overdue;
-    const dueOrPending = medications.find((m) => m.status === 'due' || m.status === 'pending');
-    if (dueOrPending) return dueOrPending;
+    const dueOrUpcoming = medications.find(
+      (m) => m.status === 'due' || m.status === 'pending' || m.status === 'upcoming'
+    );
+    if (dueOrUpcoming) return dueOrUpcoming;
     return null;
   }, [medications]);
 
   const attentionCount = useMemo(
     () =>
       medications.filter(
-        (m) => m.status === 'overdue' || m.status === 'missed' || m.status === 'due' || m.status === 'pending'
+        (m) =>
+          m.status === 'overdue' ||
+          m.status === 'missed' ||
+          m.status === 'due' ||
+          m.status === 'pending' ||
+          m.status === 'upcoming'
       ).length,
     [medications]
   );
@@ -136,7 +143,7 @@ export default function SeniorComfortView({
   }, [medications]);
 
   const nextAppointment = useMemo(() => {
-    const upcoming = appointments.filter((a) => a.status !== 'completed');
+    const upcoming = appointments.filter((a) => String(a.status || '').toLowerCase() !== 'completed');
     return upcoming[0] || appointments[0] || null;
   }, [appointments]);
 
@@ -144,13 +151,17 @@ export default function SeniorComfortView({
     setDoctorQuestionInput(nextAppointment?.elderQuestions || '');
   }, [nextAppointment]);
 
+  const voiceAnnouncementsEnabled = elderProfile?.autonomyPreferences?.voiceAnnouncementsEnabled ?? true;
+
   const handleConfirmMedication = async (med) => {
     if (!onUpdateMedicationStatus || !med) return;
     setBusyMedId(med.id);
     try {
       await onUpdateMedicationStatus(med.id, 'taken');
       setLastTakenMed(med);
-      speakText(`Great job ${firstName}. Marked ${med.name} as taken.`, 'en-IN');
+      if (voiceAnnouncementsEnabled) {
+        speakText(`Great job ${firstName}. Marked ${med.name} as taken.`, 'en-IN');
+      }
     } finally {
       setBusyMedId(null);
     }
@@ -160,7 +171,7 @@ export default function SeniorComfortView({
     if (!onUpdateMedicationStatus || !med) return;
     setBusyMedId(med.id);
     try {
-      await onUpdateMedicationStatus(med.id, 'pending');
+      await onUpdateMedicationStatus(med.id, 'upcoming');
       if (lastTakenMed?.id === med.id) {
         setLastTakenMed(null);
       }
@@ -1026,7 +1037,12 @@ export default function SeniorComfortView({
             <p className="text-2xl leading-relaxed font-bold text-slate-900">{voiceReply}</p>
             <button
               type="button"
-              onClick={() => speakText(voiceReply, 'en-IN')}
+              onClick={() =>
+                speakText(
+                  voiceReply,
+                  voiceLanguage === 'Hindi' ? 'hi-IN' : voiceLanguage === 'Telugu' ? 'te-IN' : 'en-IN'
+                )
+              }
               className="min-h-[54px] px-5 py-3 rounded-2xl bg-amber-100 hover:bg-amber-200 border-2 border-amber-400 text-amber-950 text-lg font-extrabold inline-flex items-center gap-2 cursor-pointer"
             >
               <Volume2 className="w-6 h-6" />

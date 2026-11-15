@@ -28,6 +28,17 @@ export function createApp() {
   // Trust Render / Cloud Run / Vercel reverse proxy headers (fixes express-rate-limit X-Forwarded-For validation)
   app.set('trust proxy', 1);
 
+  const syncTodayAdherence = (store) => {
+    const total = store.medications.length;
+    const taken = store.medications.filter((m) => m.status === 'taken').length;
+    if (store.adherenceHistory.length > 0) {
+      const todayBar = store.adherenceHistory[store.adherenceHistory.length - 1];
+      todayBar.total = total;
+      todayBar.taken = taken;
+      todayBar.adherencePct = total > 0 ? Math.round((taken / total) * 100) : 100;
+    }
+  };
+
   // Security & Performance Middleware (Evaluated by Platform Code Assessment)
   app.use(
     helmet({
@@ -231,6 +242,13 @@ export function createApp() {
       if (data.phone && normalizedRole === 'elder') {
         store.elderProfile.emergencyPhone = data.phone;
       }
+      const primaryElder = store.careCircleMembers.find((m) => m.role === 'elder');
+      if (primaryElder) {
+        primaryElder.name = cleanElderName;
+        if (data.phone && normalizedRole === 'elder') {
+          primaryElder.phone = data.phone;
+        }
+      }
     }
 
     const newMember = {
@@ -250,7 +268,11 @@ export function createApp() {
       notifyOnAppointment: true,
     };
 
-    store.careCircleMembers.push(newMember);
+    if (normalizedRole === 'elder') {
+      store.careCircleMembers.unshift(newMember);
+    } else {
+      store.careCircleMembers.push(newMember);
+    }
 
     const token = signSessionToken({
       id: newMember.id,
@@ -447,6 +469,7 @@ export function createApp() {
 
     store.medications.push(newMed);
     store.medications.sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime));
+    syncTodayAdherence(store);
     addActivity(
       newMed.lastActionBy,
       data.actorRole || req.user?.role || 'family',
@@ -465,33 +488,39 @@ export function createApp() {
 
     const current = store.medications[idx];
     const previousStatus = current.status;
-    const actorName = req.body.actorName || req.user?.name || store.elderProfile.name;
-    const actorRole = req.body.actorRole || req.user?.role || 'elder';
+    const { actorName: rawActorName, actorRole: rawActorRole, ...medPatch } = req.body || {};
+    const actorName = rawActorName || req.user?.name || store.elderProfile.name;
+    const actorRole = rawActorRole || req.user?.role || 'elder';
 
     const updated = {
       ...current,
-      ...req.body,
+      ...medPatch,
       id: current.id,
       lastUpdatedAt: new Date().toISOString(),
       lastActionBy: actorName,
     };
 
-    // Adjust stock when transitioning to 'taken'
-    if (previousStatus !== 'taken' && updated.status === 'taken' && updated.stockRemaining > 0) {
+    if (medPatch.stockRemaining !== undefined) {
+      const parsedStock = Number(medPatch.stockRemaining);
+      updated.stockRemaining = Number.isFinite(parsedStock) && parsedStock >= 0 ? Math.trunc(parsedStock) : current.stockRemaining;
+    }
+    if (medPatch.refillThreshold !== undefined) {
+      const parsedThreshold = Number(medPatch.refillThreshold);
+      updated.refillThreshold = Number.isFinite(parsedThreshold) && parsedThreshold >= 1 ? Math.trunc(parsedThreshold) : current.refillThreshold;
+    }
+
+    // Adjust stock when transitioning to/from 'taken'
+    if (previousStatus !== 'taken' && updated.status === 'taken' && medPatch.stockRemaining === undefined && updated.stockRemaining > 0) {
       updated.stockRemaining = Math.max(0, updated.stockRemaining - 1);
+    } else if (previousStatus === 'taken' && updated.status !== 'taken' && medPatch.stockRemaining === undefined) {
+      updated.stockRemaining = (Number(updated.stockRemaining) || 0) + 1;
     }
 
     store.medications[idx] = updated;
+    store.medications.sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime));
 
     // Update today's adherence history bar
-    const total = store.medications.length;
-    const taken = store.medications.filter((m) => m.status === 'taken').length;
-    if (store.adherenceHistory.length > 0) {
-      const todayBar = store.adherenceHistory[store.adherenceHistory.length - 1];
-      todayBar.total = total;
-      todayBar.taken = taken;
-      todayBar.adherencePct = total > 0 ? Math.round((taken / total) * 100) : 100;
-    }
+    syncTodayAdherence(store);
 
     let autoEmailDispatched = null;
     if (previousStatus !== updated.status) {
@@ -531,6 +560,7 @@ export function createApp() {
       return res.status(404).json({ error: 'Medication not found' });
     }
     const removed = store.medications.splice(idx, 1)[0];
+    syncTodayAdherence(store);
     const actorName = req.query.actorName || req.user?.name || 'Care Circle Member';
     addActivity(actorName, req.user?.role || 'family', `Removed ${removed.name} from daily schedule.`);
     persistState();
@@ -639,13 +669,21 @@ export function createApp() {
     const idx = store.appointments.findIndex((a) => a.id === req.params.id);
     if (idx === -1) return res.status(404).json({ error: 'Appointment not found' });
 
-    store.appointments[idx] = {
+    const { actorName, actorRole, ...apptPatch } = req.body || {};
+    const updatedAppt = {
       ...store.appointments[idx],
-      ...req.body,
+      ...apptPatch,
       id: store.appointments[idx].id,
     };
+    store.appointments[idx] = updatedAppt;
+    store.appointments.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+    addActivity(
+      actorName || req.user?.name || 'Care Circle',
+      actorRole || req.user?.role || 'family',
+      `Updated appointment with ${updatedAppt.doctorName}.`
+    );
     persistState();
-    res.json({ appointment: store.appointments[idx] });
+    res.json({ appointment: updatedAppt });
   });
 
   app.delete('/api/appointments/:id', (req, res) => {
@@ -667,7 +705,12 @@ export function createApp() {
       bloodSugarMgDl = 110,
       mood = 'Comfortable',
       loggedBy,
-    } = req.body;
+    } = req.body || {};
+
+    const toPositiveInt = (val, fallback) => {
+      const n = Number(val);
+      return Number.isFinite(n) && n > 0 ? Math.round(n) : fallback;
+    };
 
     const store = getStore();
     const entry = {
@@ -678,11 +721,11 @@ export function createApp() {
         hour: '2-digit',
         minute: '2-digit',
       }),
-      systolic: Number(systolic),
-      diastolic: Number(diastolic),
-      heartRate: Number(heartRate),
-      bloodSugarMgDl: Number(bloodSugarMgDl),
-      mood,
+      systolic: toPositiveInt(systolic, 125),
+      diastolic: toPositiveInt(diastolic, 80),
+      heartRate: toPositiveInt(heartRate, 72),
+      bloodSugarMgDl: toPositiveInt(bloodSugarMgDl, 110),
+      mood: String(mood || 'Comfortable').trim() || 'Comfortable',
       loggedBy: loggedBy || store.elderProfile.name,
     };
     store.vitalsLog.unshift(entry);
@@ -785,6 +828,14 @@ export function createApp() {
       store.elderProfile.allergies = allergies.split(',').map((a) => a.trim()).filter(Boolean);
     }
 
+    const primaryElder = store.careCircleMembers.find((m) => m.role === 'elder');
+    if (primaryElder) {
+      primaryElder.name = store.elderProfile.name;
+      if (store.elderProfile.emergencyPhone) {
+        primaryElder.phone = store.elderProfile.emergencyPhone;
+      }
+    }
+
     addActivity(
       req.user?.name || 'Care Circle',
       req.user?.role || 'family',
@@ -869,6 +920,7 @@ export function createApp() {
     targetMed.status = 'missed';
     targetMed.lastUpdatedAt = new Date().toISOString();
     targetMed.lastActionBy = '9:00 AM Auto-Escalation Monitor';
+    syncTodayAdherence(store);
 
     const apiKey = req.headers['x-gemini-api-key'] || req.body?.apiKey || '';
     const aiInsight = await generateIntelligentCaregiverAlert({
@@ -1022,6 +1074,11 @@ export function createApp() {
   app.post('/api/reset-demo', (_req, res) => {
     const fresh = resetStoreToSeed();
     res.json({ reset: true, medicationsCount: fresh.medications.length });
+  });
+
+  // JSON 404 for unknown API endpoints
+  app.use('/api/*', (_req, res) => {
+    res.status(404).json({ error: 'API endpoint not found' });
   });
 
   // Serve built React SPA in production (Cloud Run / Docker / Render)

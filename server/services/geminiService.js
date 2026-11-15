@@ -375,18 +375,37 @@ User Question: "${message}"`;
       : `Hello ${elderProfile.preferredName}! `;
 
   let reply = '';
-  if (q.includes('next') || q.includes('upcoming') || q.includes('now') || q.includes('pill') || q.includes('tablet')) {
+  const isDoctorQuery =
+    (q.includes('doctor') || q.includes('appointment') || q.includes('visit') || q.includes('mehta')) &&
+    !q.includes('pill') &&
+    !q.includes('tablet') &&
+    !q.includes('medicine');
+
+  if (isDoctorQuery) {
+    const appt = appointments[0];
+    if (appt) {
+      reply = `${greeting}Your next appointment is with ${appt.doctorName} (${appt.specialty}) at ${appt.hospital} on ${appt.date} at ${appt.time}. Accompanied by ${appt.accompaniedBy || 'Family'}. Remember to bring your Blood Pressure log${appt.elderQuestions ? `, and we have saved your question: "${appt.elderQuestions}"` : '.'}`;
+    } else {
+      reply = `${greeting}You have no upcoming doctor appointments scheduled right now. Your Care Circle can add one anytime in the Appointments tab.`;
+    }
+  } else if (
+    q.includes('next') ||
+    q.includes('upcoming') ||
+    q.includes('now') ||
+    q.includes('pill') ||
+    q.includes('tablet') ||
+    q.includes('medicine')
+  ) {
     const nextMed = missed[0] || upcoming[0] || medications[0];
     if (missed.length > 0) {
-      reply = `${greeting}You have one overdue morning tablet: ${missed[0].name} (${missed[0].dosage}, the ${missed[0].pillColor} ${missed[0].pillShape}) for ${missed[0].purpose}. After that, your next scheduled dose is ${upcoming[0] ? `${upcoming[0].name} at ${upcoming[0].scheduledTime} (${upcoming[0].mealInstruction})` : 'this evening'}. Would you like to mark Telmisartan as taken now?`;
+      reply = `${greeting}You have one overdue morning tablet: ${missed[0].name} (${missed[0].dosage}, the ${missed[0].pillColor} ${missed[0].pillShape}) for ${missed[0].purpose}. After that, your next scheduled dose is ${upcoming[0] ? `${upcoming[0].name} at ${upcoming[0].scheduledTime} (${upcoming[0].mealInstruction})` : 'this evening'}. Would you like to mark ${missed[0].name} as taken now?`;
     } else if (nextMed) {
       reply = `${greeting}Your next scheduled medication is ${nextMed.name} (${nextMed.dosage}) at ${nextMed.scheduledTime} — ${nextMed.mealInstruction}. Look for the ${nextMed.pillColor} ${nextMed.pillShape}.`;
+    } else {
+      reply = `${greeting}You have no medications scheduled right now. Your Care Circle can add medicines anytime.`;
     }
-  } else if (q.includes('doctor') || q.includes('appointment') || q.includes('mehta')) {
-    const appt = appointments[0];
-    reply = `${greeting}Your next appointment is with ${appt.doctorName} (${appt.specialty}) at ${appt.hospital} on ${appt.date} at ${appt.time}. Priya will accompany you. Remember to bring your 14-day Blood Pressure log, and we have saved your question about reducing Telmisartan to 20 mg!`;
   } else if (q.includes('dizzy') || q.includes('side effect') || q.includes('feel') || q.includes('tired')) {
-    reply = `${greeting}Thank you for sharing how you feel. Because you take Telmisartan for blood pressure and Metformin for blood sugar, mild lightheadedness can happen if you stand up quickly or haven't had enough water. Please sit comfortably, sip a glass of water, and check your blood pressure. If dizziness continues, tap the SOS button so Priya and Nurse Anita are alerted right away.`;
+    reply = `${greeting}Thank you for sharing how you feel. Because you take blood pressure and diabetes medicines, mild lightheadedness can happen if you stand up quickly or haven't had enough water. Please sit comfortably, sip a glass of water, and check your blood pressure. If dizziness continues, tap the SOS button so your Care Circle is alerted right away.`;
   } else {
     reply = `${greeting}Today you have completed ${taken.length} of ${medications.length} medications and ${routines.filter((r) => r.completed).length} of ${routines.length} daily wellness routines. ${missed.length > 0 ? `Please note that your ${missed[0].scheduledTime} ${missed[0].name} (${missed[0].dosage}) is marked as missed.` : 'You are right on track with all morning doses!'} How can I support your care decisions today?`;
   }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   Lock,
@@ -25,6 +25,21 @@ export default function PasscodeModal({
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedMemberId((prev) => {
+        if (currentMember?.id && members.some((m) => m.id === currentMember.id)) {
+          return currentMember.id;
+        }
+        if (prev && members.some((m) => m.id === prev)) {
+          return prev;
+        }
+        return members[0]?.id || '';
+      });
+      setError('');
+    }
+  }, [isOpen, currentMember, members]);
 
   const [newMember, setNewMember] = useState({
     name: '',
