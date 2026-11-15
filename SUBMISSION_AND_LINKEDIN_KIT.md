@@ -53,7 +53,7 @@ Automatically monitors adherence and dispatches proactive HTML email reminders f
 • Bilingual AI Care Companion & Doctor Visit Brief Generator: Prepares clinical summaries and questions for upcoming cardiology/endocrinology visits, plus `.ics` calendar exports and a printable QR Emergency Medical ID Card.
 
 🔗 Live Deployed Project: [INSERT YOUR CLOUD RUN / VERCEL URL HERE]
-💻 Public GitHub Repository: [INSERT YOUR PUBLIC GITHUB REPO URL HERE]
+💻 Public GitHub Repository: https://github.com/9553943884pavan-alt/KinCare
 
 A huge thank you to @Makers Need More (MnM), Google for Developers, and Hack2Skill for organizing an incredible build experience with Google Antigravity and Gemini AI! 🙌
 
