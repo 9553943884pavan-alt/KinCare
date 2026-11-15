@@ -15,6 +15,8 @@ describe('KinCare AI — Elderly Care & Medication Management Platform API', () 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('healthy');
     expect(res.body.googleServices.geminiSdk).toBe('@google/genai');
+    expect(res.body.googleServices.model).toBeTruthy();
+    expect(res.body.googleServices.alertRecipient).toBe('9553943884pavan@gmail.com');
     expect(res.body.googleServices.cloudRunReady).toBe(true);
   });
 
@@ -132,5 +134,18 @@ describe('KinCare AI — Elderly Care & Medication Management Platform API', () 
       .send({ message: 'What is my next tablet today?', language: 'English' });
     expect(chatRes.status).toBe(200);
     expect(chatRes.body.reply).toBeTruthy();
+  });
+
+  it('POST /api/reminders/simulate-9am-missed detects unconfirmed 9:00 AM dose and triggers caregiver alert', async () => {
+    const res = await request(app)
+      .post('/api/reminders/simulate-9am-missed')
+      .send({ force: true });
+    expect(res.status).toBe(201);
+    expect(res.body.simulated).toBe(true);
+    expect(res.body.medication.scheduledTime).toBe('09:00');
+    expect(res.body.medication.status).toBe('missed');
+    expect(res.body.aiInsight).toBeTruthy();
+    expect(res.body.emailLog.recipients).toContain('9553943884pavan@gmail.com');
+    expect(res.body.emailLog.htmlBody).toContain('Intelligent Caregiver Notification Insights');
   });
 });

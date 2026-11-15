@@ -112,7 +112,7 @@ export default function PasscodeModal({
                 Care Circle Secure Passcode Access
               </h2>
               <p className="text-teal-100 text-sm">
-                Shared ecosystem for Ramesh Sharma (74 yrs), Family Members & Caretakers
+                Shared ecosystem for Elderly Person (Ramesh Sharma), Family Member &amp; Caregiver
               </p>
             </div>
           </div>
@@ -168,7 +168,11 @@ export default function PasscodeModal({
                               {getRoleIcon(m.role)}
                             </span>
                             <span className="text-[11px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
-                              {m.role}
+                              {m.role === 'elder'
+                                ? 'Elderly Person'
+                                : m.role === 'family'
+                                ? 'Family Member'
+                                : 'Caregiver'}
                             </span>
                           </div>
                           <p className="font-bold text-slate-900 text-sm">{m.name}</p>
@@ -266,7 +270,7 @@ export default function PasscodeModal({
               /* Add New Authorized Care Circle Member Form */
               <form onSubmit={handleCreateMember} className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-200">
                 <h3 className="font-bold text-slate-800 text-sm">
-                  Authorize a New Family Member or Caretaker with Passcode Access
+                  Authorize a New Family Member or Caregiver with Passcode Access
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
@@ -288,7 +292,7 @@ export default function PasscodeModal({
                       className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white"
                     >
                       <option value="family">Family Member</option>
-                      <option value="caretaker">Caretaker / Nurse</option>
+                      <option value="caretaker">Caregiver / Nurse</option>
                     </select>
                   </div>
                   <div>

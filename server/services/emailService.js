@@ -3,6 +3,17 @@ import { getStore, persistState, addActivity } from '../data/store.js';
 
 let cachedEtherealTransporter = null;
 
+function sanitizeSecret(raw) {
+  return String(raw || '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .trim();
+}
+
+function getDefaultAlertEmail() {
+  return sanitizeSecret(process.env.ALERT_EMAIL_RECIPIENT) || '9553943884pavan@gmail.com';
+}
+
 async function getTransporter() {
   // 1. Check if real SMTP credentials are provided
   if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
@@ -59,9 +70,17 @@ async function getTransporter() {
 /**
  * Builds rich accessible HTML email templates for Elderly Care & Family Notifications.
  */
-export function buildEmailTemplate({ type, elderProfile, item, customRecipients, customNote }) {
+export function buildEmailTemplate({
+  type,
+  elderProfile,
+  item,
+  customRecipients,
+  customNote,
+  aiInsight = null,
+}) {
   const store = getStore();
   const elder = elderProfile || store.elderProfile;
+  const fallbackEmail = getDefaultAlertEmail();
 
   const defaultRecipients = store.careCircleMembers
     .filter((m) => {
@@ -72,15 +91,33 @@ export function buildEmailTemplate({ type, elderProfile, item, customRecipients,
     })
     .map((m) => m.email);
 
-  const recipients =
+  const rawRecipients =
     Array.isArray(customRecipients) && customRecipients.length > 0
       ? customRecipients
       : defaultRecipients;
+
+  const recipients = [...new Set(rawRecipients.filter(Boolean))];
+  if (recipients.length === 0) {
+    recipients.push(fallbackEmail);
+  }
 
   if (type === 'MISSED_MEDICATION') {
     const med = item || store.medications.find((m) => m.status === 'missed') || store.medications[0];
     const subject = `⚠️ Urgent Care Alert: ${elder.preferredName} missed ${med.scheduledTime} ${med.name} (${med.dosage})`;
     const summary = `Proactive missed-medication reminder for ${med.name} (${med.dosage}) scheduled at ${med.scheduledTime}. Visual pill: ${med.pillColor} ${med.pillShape}.`;
+
+    const aiInsightBlock = aiInsight
+      ? `
+        <div style="background:#f0fdfa;padding:14px 16px;border-radius:12px;border:1px solid #5eead4;margin-bottom:16px;color:#134e4a;">
+          <p style="margin:0 0 6px;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;color:#0f766e;">
+            🤖 Intelligent Caregiver Notification Insights (${aiInsight.engine || 'Gemini AI'})
+          </p>
+          <p style="margin:0 0 6px;font-size:14px;font-weight:700;">${aiInsight.headline}</p>
+          <p style="margin:0 0 6px;font-size:13px;line-height:1.45;">${aiInsight.guidance}</p>
+          <p style="margin:0;font-size:13px;"><strong>Suggested Caregiver Action:</strong> ${aiInsight.suggestedAction}</p>
+        </div>`
+      : '';
+
     const htmlBody = `
       <div style="font-family:'Inter',system-ui,sans-serif;max-width:600px;margin:0 auto;padding:24px;border-radius:16px;background:#fff1f2;border:2px solid #fda4af;color:#881337;">
         <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #fecdd3;padding-bottom:12px;margin-bottom:16px;">
@@ -88,7 +125,7 @@ export function buildEmailTemplate({ type, elderProfile, item, customRecipients,
           <span style="background:#e11d48;color:#fff;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;">PROACTIVE ESCALATION</span>
         </div>
         <p style="font-size:16px;line-height:1.5;margin:0 0 12px;">
-          Hello Care Circle, <strong>${elder.name} (${elder.age} yrs)</strong> has not yet logged the scheduled dose below:
+          Hello Family Member / Caregiver, <strong>${elder.name} (${elder.age} yrs)</strong> has not yet confirmed taking the scheduled dose below:
         </p>
         <div style="background:#ffffff;padding:16px;border-radius:12px;border:1px solid #fecdd3;margin-bottom:16px;">
           <h3 style="margin:0 0 8px;color:#be123c;font-size:20px;">💊 ${med.name} — ${med.dosage}</h3>
@@ -97,6 +134,7 @@ export function buildEmailTemplate({ type, elderProfile, item, customRecipients,
           <p style="margin:4px 0;font-size:14px;"><strong>Medical Purpose:</strong> ${med.purpose}</p>
           ${med.notes ? `<p style="margin:8px 0 0;font-size:13px;color:#64748b;"><em>Clinical Note: ${med.notes}</em></p>` : ''}
         </div>
+        ${aiInsightBlock}
         ${customNote ? `<p style="background:#ffe4e6;padding:10px 14px;border-radius:8px;font-size:14px;"><strong>Care Circle Note:</strong> ${customNote}</p>` : ''}
         <p style="font-size:14px;color:#9f1239;margin-bottom:0;">
           📞 <strong>Emergency / Quick Check-In:</strong> ${elder.emergencyPhone} • Please verify with ${elder.preferredName} before administering a catch-up dose.
@@ -198,6 +236,7 @@ export async function dispatchProactiveEmail({
   itemId = null,
   customRecipients = null,
   customNote = '',
+  aiInsight = null,
   triggeredBy = 'Proactive Reminder Engine',
 }) {
   const store = getStore();
@@ -214,32 +253,45 @@ export async function dispatchProactiveEmail({
     item,
     customRecipients,
     customNote,
+    aiInsight,
   });
 
+  const targetEmail = getDefaultAlertEmail();
+  const resendRecipients = recipients.length > 0 ? recipients : [targetEmail];
+
   let previewUrl = null;
+  let resendId = null;
+  let resendError = null;
   let transportMode = 'KinCare Hybrid Live Outbox';
   let status = 'Delivered';
 
   // Option A: Resend API if configured
-  if (process.env.RESEND_API_KEY && process.env.NODE_ENV !== 'test') {
+  const resendKey = sanitizeSecret(process.env.RESEND_API_KEY);
+  if (resendKey && process.env.NODE_ENV !== 'test') {
     try {
       const resp = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+          Authorization: `Bearer ${resendKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          from: process.env.SMTP_FROM || 'KinCare AI <onboarding@resend.dev>',
-          to: recipients,
+          from: 'KinCare AI <onboarding@resend.dev>',
+          to: resendRecipients,
           subject,
           html: htmlBody,
         }),
       });
+      const respJson = await resp.json().catch(() => ({}));
       if (resp.ok) {
-        transportMode = 'Resend Transactional Email API';
+        resendId = respJson.id || null;
+        transportMode = `Resend Live Email API (${resendRecipients.join(', ')})`;
+        status = 'Delivered via Resend';
+      } else {
+        resendError = respJson.message || `Resend HTTP ${resp.status}`;
       }
-    } catch {
+    } catch (err) {
+      resendError = err?.message || 'Resend network error';
       // Fall through to Nodemailer transporter
     }
   }
@@ -250,8 +302,8 @@ export async function dispatchProactiveEmail({
       const { mode, transporter } = await getTransporter();
       transportMode = mode;
       const info = await transporter.sendMail({
-        from: process.env.SMTP_FROM || '"KinCare AI Care Circle" <alerts@kincare.ai>',
-        to: recipients.join(', '),
+        from: sanitizeSecret(process.env.SMTP_FROM) || '"KinCare AI Care Circle" <onboarding@resend.dev>',
+        to: resendRecipients.join(', '),
         subject,
         text: summary,
         html: htmlBody,
@@ -269,10 +321,12 @@ export async function dispatchProactiveEmail({
     id: `email-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     type,
     subject,
-    recipients,
+    recipients: resendRecipients,
     sentAt: new Date().toISOString(),
     status,
     transportMode,
+    resendId,
+    resendError,
     previewUrl,
     summary,
     htmlBody,
@@ -284,7 +338,7 @@ export async function dispatchProactiveEmail({
     store.emailLogs.length = 30;
   }
 
-  addActivity(triggeredBy, 'system', `Sent ${type.replace('_', ' ')} email: "${subject}"`);
+  addActivity(triggeredBy, 'system', `Sent ${type.replace('_', ' ')} email to ${resendRecipients.join(', ')}: "${subject}"`);
   persistState();
 
   return logEntry;

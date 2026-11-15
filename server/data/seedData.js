@@ -2,6 +2,7 @@ import { hashPasscode } from '../security/passcodeAuth.js';
 
 export function createInitialSeedData() {
   const todayStr = new Date().toISOString().split('T')[0];
+  const alertEmail = (process.env.ALERT_EMAIL_RECIPIENT || '9553943884pavan@gmail.com').trim();
 
   return {
     elderProfile: {
@@ -35,9 +36,9 @@ export function createInitialSeedData() {
         id: 'member-elder-1',
         name: 'Ramesh Sharma',
         role: 'elder',
-        roleLabel: 'Elderly Individual (Centre of Care)',
+        roleLabel: 'Elderly Person (Centre of Care)',
         relationship: 'Self',
-        email: 'ramesh.sharma.elder@kincare.demo',
+        email: alertEmail,
         phone: '+91 98450 11223',
         passcodePlainHint: '123456',
         passcodeHash: hashPasscode('123456', 'salt-elder-01'),
@@ -53,7 +54,7 @@ export function createInitialSeedData() {
         role: 'family',
         roleLabel: 'Family Member (Daughter)',
         relationship: 'Daughter',
-        email: 'priya.sharma.family@kincare.demo',
+        email: alertEmail,
         phone: '+91 98450 99887',
         passcodePlainHint: '654321',
         passcodeHash: hashPasscode('654321', 'salt-family-01'),
@@ -67,9 +68,9 @@ export function createInitialSeedData() {
         id: 'member-caretaker-1',
         name: 'Nurse Anita Rao',
         role: 'caretaker',
-        roleLabel: 'Primary Caretaker (Home Nurse)',
-        relationship: 'Certified Caretaker',
-        email: 'anita.rao.caretaker@kincare.demo',
+        roleLabel: 'Primary Caregiver (Home Nurse)',
+        relationship: 'Certified Caregiver',
+        email: alertEmail,
         phone: '+91 98450 44556',
         passcodePlainHint: '112233',
         passcodeHash: hashPasscode('112233', 'salt-caretaker-01'),
@@ -345,11 +346,7 @@ export function createInitialSeedData() {
         id: 'email-seed-1',
         type: 'MISSED_MEDICATION',
         subject: '⚠️ Action Needed: Ramesh Ji missed 09:00 AM Telmisartan (40 mg)',
-        recipients: [
-          'ramesh.sharma.elder@kincare.demo',
-          'priya.sharma.family@kincare.demo',
-          'anita.rao.caretaker@kincare.demo',
-        ],
+        recipients: [alertEmail],
         sentAt: new Date(Date.now() - 1000 * 60 * 22).toISOString(),
         status: 'Delivered (Proactive Escalation)',
         transportMode: 'KinCare Proactive Engine',
@@ -370,7 +367,7 @@ export function createInitialSeedData() {
         id: 'email-seed-2',
         type: 'APPOINTMENT_REMINDER',
         subject: '📅 Upcoming Appointment: Dr. Vikram Mehta (Cardiology) in 2 Days',
-        recipients: ['ramesh.sharma.elder@kincare.demo', 'priya.sharma.family@kincare.demo'],
+        recipients: [alertEmail],
         sentAt: new Date(Date.now() - 1000 * 60 * 180).toISOString(),
         status: 'Delivered',
         transportMode: 'KinCare Proactive Engine',

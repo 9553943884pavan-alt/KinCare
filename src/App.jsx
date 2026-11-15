@@ -309,6 +309,48 @@ export default function App() {
     }
   };
 
+  const handleSimulate9AmMissed = async () => {
+    setEmailSending(true);
+    try {
+      const res = await apiFetch('/api/reminders/simulate-9am-missed', {
+        method: 'POST',
+        body: JSON.stringify({ force: true }),
+      });
+      if (res.emailLog) {
+        setSelectedEmailLog(res.emailLog);
+        const idInfo = res.emailLog.resendId ? ` (Resend ID: ${res.emailLog.resendId})` : '';
+        showToast(
+          `9:00 AM Missed Dose Detected — Email sent to ${res.emailLog.recipients?.join(', ')}${idInfo}!`,
+          'warning'
+        );
+      }
+      await fetchDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to simulate 9:00 AM missed dose', 'error');
+    } finally {
+      setEmailSending(false);
+    }
+  };
+
+  const handleQuickRoleSwitch = async (targetRole) => {
+    const member = careCircleMembers.find((m) => m.role === targetRole);
+    if (!member) {
+      setPasscodeModalOpen(true);
+      return;
+    }
+    const defaultPinMap = {
+      elder: '123456',
+      family: '654321',
+      caretaker: '112233',
+    };
+    const pin = member.passcodePlainHint || defaultPinMap[targetRole];
+    try {
+      await handleVerifyPasscode(pin, member.id);
+    } catch {
+      setPasscodeModalOpen(true);
+    }
+  };
+
   const handleTriggerSOS = async () => {
     const res = await apiFetch('/api/sos', {
       method: 'POST',
@@ -531,47 +573,68 @@ export default function App() {
                   KinCare <span className="text-teal-700">AI</span>
                 </h1>
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200">
-                  Gemini 2.5 + Cloud Run
+                  Gemini 3.5 + Resend + Cloud Run
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                Smart Elderly Care, Medication Adherence & Collaborative Family Platform
+                Smart Elderly Care, Medication Adherence &amp; Collaborative Family Platform
               </p>
             </div>
           </div>
 
-          {/* Dual Experience Switcher + Active Passcode Profile */}
+          {/* 3-Role Instant Switcher + Passcode Vault */}
           <div className="flex flex-wrap items-center gap-2.5">
             <div
               className="inline-flex rounded-2xl bg-slate-100 p-1 border border-slate-200"
               role="group"
-              aria-label="Interface Mode Switcher"
+              aria-label="Three Main User Roles Switcher"
             >
               <button
                 type="button"
-                onClick={() => setViewMode('comfort')}
-                className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
-                  viewMode === 'comfort'
+                onClick={() => handleQuickRoleSwitch('elder')}
+                className={`px-3 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
+                  activeMember?.role === 'elder' && viewMode === 'comfort'
                     ? 'bg-teal-700 text-white shadow-xs'
                     : 'text-slate-700 hover:text-slate-900'
                 }`}
               >
-                <Volume2 className="w-4 h-4" />
-                Senior Comfort Mode (Elder)
+                <Volume2 className="w-3.5 h-3.5" />
+                Elderly Person
               </button>
               <button
                 type="button"
-                onClick={() => setViewMode('command')}
-                className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
-                  viewMode === 'command'
-                    ? 'bg-slate-900 text-white shadow-xs'
+                onClick={() => handleQuickRoleSwitch('family')}
+                className={`px-3 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
+                  activeMember?.role === 'family' && viewMode === 'command'
+                    ? 'bg-indigo-700 text-white shadow-xs'
                     : 'text-slate-700 hover:text-slate-900'
                 }`}
               >
-                <Users className="w-4 h-4" />
-                Family & Caretaker Portal
+                <Users className="w-3.5 h-3.5" />
+                Family Member
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickRoleSwitch('caretaker')}
+                className={`px-3 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
+                  activeMember?.role === 'caretaker' && viewMode === 'command'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-slate-700 hover:text-slate-900'
+                }`}
+              >
+                <Activity className="w-3.5 h-3.5" />
+                Caregiver
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setViewMode(viewMode === 'comfort' ? 'command' : 'comfort')}
+              className="px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold cursor-pointer"
+              title="Toggle Senior Comfort UI vs Command Center"
+            >
+              {viewMode === 'comfort' ? 'Portal View' : 'Comfort UI'}
+            </button>
 
             <button
               type="button"
@@ -581,10 +644,10 @@ export default function App() {
               <KeyRound className="w-4 h-4 text-amber-700" />
               <div className="text-left">
                 <span className="block text-[10px] uppercase tracking-wider text-amber-800 font-extrabold">
-                  Active Passcode Role
+                  Passcode Vault
                 </span>
                 <span className="font-bold">
-                  {activeMember?.name || 'Ramesh Sharma'} ({activeMember?.role || 'elder'})
+                  {activeMember?.name || 'Ramesh Sharma'} ({activeMember?.role === 'caretaker' ? 'Caregiver' : activeMember?.role || 'elder'})
                 </span>
               </div>
             </button>
@@ -705,13 +768,13 @@ export default function App() {
                     type="button"
                     disabled={emailSending}
                     onClick={() => {
-                      handleDispatchEmail('MISSED_MEDICATION', missedMedications[0].id);
+                      handleSimulate9AmMissed();
                       setActiveTab('emails');
                     }}
                     className="px-4 py-2.5 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                   >
                     <Mail className="w-4 h-4" />
-                    Send Proactive Email Alert
+                    {emailSending ? 'Sending...' : 'Simulate 9:00 AM Missed Dose & Email 9553943884pavan@gmail.com'}
                   </button>
                 </div>
               </div>
@@ -1373,6 +1436,18 @@ export default function App() {
                     <button
                       type="button"
                       disabled={emailSending}
+                      onClick={handleSimulate9AmMissed}
+                      className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-700 to-rose-600 hover:from-rose-800 hover:to-rose-700 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                    >
+                      <AlertTriangle className="w-4 h-4" />
+                      {emailSending
+                        ? 'Dispatching Resend + AI Alert...'
+                        : 'Simulate 9:00 AM Missed Dose & Email 9553943884pavan@gmail.com'}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={emailSending}
                       onClick={handleRunAutoScanReminders}
                       className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-teal-700 to-emerald-700 hover:from-teal-800 hover:to-emerald-800 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-sm cursor-pointer"
                     >
@@ -1441,8 +1516,10 @@ export default function App() {
                             <span className="truncate">{log.subject}</span>
                           </div>
                           <div className="flex items-center justify-between text-[11px] text-slate-500 mt-1">
-                            <span>To: {log.recipients?.length || 1} recipients</span>
-                            <span className="text-emerald-700 font-semibold">{log.status}</span>
+                            <span>To: {log.recipients?.join(', ') || '9553943884pavan@gmail.com'}</span>
+                            <span className="text-emerald-700 font-semibold">
+                              {log.resendId ? `Resend ID: ${log.resendId.slice(0, 12)}...` : log.status}
+                            </span>
                           </div>
                         </div>
                       ))}
@@ -1459,6 +1536,11 @@ export default function App() {
                           <span className="text-xs font-extrabold uppercase px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800">
                             ✓ {selectedEmailLog.status} • {selectedEmailLog.transportMode}
                           </span>
+                          {selectedEmailLog.resendId && (
+                            <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-full bg-teal-50 text-teal-800 border border-teal-200">
+                              Resend Delivery ID: {selectedEmailLog.resendId}
+                            </span>
+                          )}
                           {selectedEmailLog.previewUrl && (
                             <a
                               href={selectedEmailLog.previewUrl}
@@ -1502,7 +1584,7 @@ export default function App() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <span className="text-xs font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-teal-100 text-teal-800">
-                        Google Gemini 2.5 Flash (@google/genai)
+                        Google Gemini 3.5 Flash Lite (@google/genai)
                       </span>
                       <h2 className="text-xl font-extrabold text-slate-900 mt-1">
                         AI Prescription & Label Scanner

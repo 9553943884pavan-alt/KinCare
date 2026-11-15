@@ -1,13 +1,73 @@
 import { GoogleGenAI } from '@google/genai';
 
+const GEMINI_MODEL_CASCADE = [
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-3.6-flash',
+  'gemini-3.8-flash',
+  'gemini-3-flash-preview',
+];
+
+function sanitizeApiKey(rawKey) {
+  return String(rawKey || '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .trim();
+}
+
 function getGeminiClient(overrideKey) {
-  const apiKey = (overrideKey || process.env.GEMINI_API_KEY || '').trim();
+  const cleanedOverride = sanitizeApiKey(overrideKey);
+  if (process.env.NODE_ENV === 'test' && !cleanedOverride) {
+    return null;
+  }
+  const apiKey = cleanedOverride || sanitizeApiKey(process.env.GEMINI_API_KEY);
   if (!apiKey) return null;
   try {
     return new GoogleGenAI({ apiKey });
   } catch {
     return null;
   }
+}
+
+function formatModelLabel(modelId) {
+  return modelId
+    .split('-')
+    .map((part) => (part.toLowerCase() === 'gemini' ? 'Gemini' : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join(' ');
+}
+
+/**
+ * Attempts generation across a resilient cascade of available Gemini 3 models.
+ * @param {GoogleGenAI} ai
+ * @param {{ contents: any, config?: object }} params
+ * @returns {Promise<{ text: string, model: string, engine: string } | null>}
+ */
+export async function generateWithGeminiCascade(ai, { contents, config = undefined }) {
+  if (!ai) return null;
+  const preferred = sanitizeApiKey(process.env.GEMINI_MODEL);
+  const models = preferred
+    ? [preferred, ...GEMINI_MODEL_CASCADE.filter((m) => m !== preferred)]
+    : GEMINI_MODEL_CASCADE;
+
+  for (const model of models) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents,
+        ...(config ? { config } : {}),
+      });
+      if (response && response.text) {
+        return {
+          text: response.text,
+          model,
+          engine: `Google ${formatModelLabel(model)} (@google/genai)`,
+        };
+      }
+    } catch {
+      // Try next model in cascade on quota/404/503
+    }
+  }
+  return null;
 }
 
 /**
@@ -25,8 +85,7 @@ export async function analyzeMedicationInteractions({
     .join('; ');
 
   if (ai) {
-    try {
-      const prompt = `You are a geriatric clinical pharmacist assistant for an elderly care platform.
+    const prompt = `You are a geriatric clinical pharmacist assistant for an elderly care platform.
 Analyze the following active medications, conditions, and allergies for a senior patient:
 - Medications: ${medSummary}
 - Conditions: ${conditions.join(', ')}
@@ -47,21 +106,22 @@ Return ONLY valid JSON with the following structure:
   "elderFriendlyTips": ["Tip 1", "Tip 2", "Tip 3"]
 }`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-        },
-      });
+    const result = await generateWithGeminiCascade(ai, {
+      contents: prompt,
+      config: { responseMimeType: 'application/json' },
+    });
 
-      const parsed = JSON.parse(response.text);
-      return {
-        ...parsed,
-        engine: 'Google Gemini 2.5 Flash (@google/genai)',
-      };
-    } catch {
-      // Fall back to deterministic clinical rule engine
+    if (result) {
+      try {
+        const parsed = JSON.parse(result.text);
+        return {
+          ...parsed,
+          model: result.model,
+          engine: result.engine,
+        };
+      } catch {
+        // Fall through to deterministic clinical engine
+      }
     }
   }
 
@@ -91,7 +151,10 @@ Return ONLY valid JSON with the following structure:
     });
   }
 
-  if (names.some((n) => n.includes('metformin')) && names.some((n) => n.includes('calcirol') || n.includes('calcium'))) {
+  if (
+    names.some((n) => n.includes('metformin')) &&
+    names.some((n) => n.includes('calcirol') || n.includes('calcium'))
+  ) {
     interactions.push({
       severity: 'Info',
       pair: 'Metformin XR + Vitamin D3 / Calcium Timing',
@@ -120,30 +183,34 @@ Return ONLY valid JSON with the following structure:
       'Stand up slowly in two stages (sit on bed edge for 10 seconds first) while taking Telmisartan.',
       'Keep a glass of water nearby during the day to support kidney health.',
     ],
-    engine: ai ? 'Google Gemini 2.5 Flash (@google/genai)' : 'KinCare Clinical AI + Gemini Hybrid Engine',
+    engine: 'KinCare Clinical AI + Gemini Hybrid Engine',
   };
 }
 
 /**
  * 2. AI Prescription & Pill Bottle Label Scanner
  */
-export async function parsePrescriptionInput({ text = '', imageBase64 = '', mimeType = 'image/jpeg', apiKey = '' }) {
+export async function parsePrescriptionInput({
+  text = '',
+  imageBase64 = '',
+  mimeType = 'image/jpeg',
+  apiKey = '',
+}) {
   const ai = getGeminiClient(apiKey);
 
   if (ai && (text || imageBase64)) {
-    try {
-      const parts = [];
-      if (imageBase64) {
-        const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
-        parts.push({
-          inlineData: {
-            data: cleanBase64,
-            mimeType: mimeType || 'image/jpeg',
-          },
-        });
-      }
+    const parts = [];
+    if (imageBase64) {
+      const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
       parts.push({
-        text: `Extract structured medication schedule items from this prescription or medication label for an elderly patient.
+        inlineData: {
+          data: cleanBase64,
+          mimeType: mimeType || 'image/jpeg',
+        },
+      });
+    }
+    parts.push({
+      text: `Extract structured medication schedule items from this prescription or medication label for an elderly patient.
 Input Note: "${text || 'Analyze the attached prescription image'}"
 Return ONLY a JSON object with this exact shape:
 {
@@ -163,23 +230,24 @@ Return ONLY a JSON object with this exact shape:
   ],
   "plainLanguageSummary": "Warm, reassuring 1-2 sentence explanation for the elderly patient."
 }`,
-      });
+    });
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: parts,
-        config: {
-          responseMimeType: 'application/json',
-        },
-      });
+    const result = await generateWithGeminiCascade(ai, {
+      contents: parts,
+      config: { responseMimeType: 'application/json' },
+    });
 
-      const parsed = JSON.parse(response.text);
-      return {
-        ...parsed,
-        engine: 'Google Gemini 2.5 Flash Vision/NLP (@google/genai)',
-      };
-    } catch {
-      // Fall back to smart NLP parser below
+    if (result) {
+      try {
+        const parsed = JSON.parse(result.text);
+        return {
+          ...parsed,
+          model: result.model,
+          engine: `${result.engine} Vision/NLP`,
+        };
+      } catch {
+        // Fall back to deterministic NLP parser below
+      }
     }
   }
 
@@ -214,7 +282,6 @@ Return ONLY a JSON object with this exact shape:
       notes: 'Swallow whole before morning tea or breakfast.',
     });
   } else if (raw.length > 3) {
-    // Parse custom text lines
     const matchDose = raw.match(/(\d+\s*(?:mg|mcg|iu|ml|g))/i);
     const matchTime = raw.match(/(\d{1,2}:\d{2})/);
     const words = raw.split(/\s+/);
@@ -232,7 +299,6 @@ Return ONLY a JSON object with this exact shape:
       notes: `Parsed from prescription: "${raw.slice(0, 80)}"`,
     });
   } else {
-    // Default sample prescription scan result
     extractedMedications.push({
       name: 'Neurobion Forte (Vitamin B1 + B6 + B12)',
       dosage: '1 Tablet',
@@ -250,7 +316,7 @@ Return ONLY a JSON object with this exact shape:
   return {
     extractedMedications,
     plainLanguageSummary: `We identified ${extractedMedications.length} medication(s) and translated the clinical abbreviations into a clear, senior-friendly schedule with visual pill indicators.`,
-    engine: ai ? 'Google Gemini 2.5 Flash (@google/genai)' : 'KinCare AI Prescription Parser',
+    engine: 'KinCare AI Prescription Parser',
   };
 }
 
@@ -272,8 +338,7 @@ export async function askCareCompanion({
   const upcoming = medications.filter((m) => m.status === 'upcoming');
 
   if (ai) {
-    try {
-      const sysPrompt = `You are KinCare AI, a warm, respectful, and crystal-clear healthcare companion for ${elderProfile.name} (${elderProfile.age} yrs, called "${elderProfile.preferredName}") and their family care circle.
+    const sysPrompt = `You are KinCare AI, a warm, respectful, and crystal-clear healthcare companion for ${elderProfile.name} (${elderProfile.age} yrs, called "${elderProfile.preferredName}") and their family care circle.
 Always keep the elderly individual at the centre of their own healthcare decisions.
 Respond in ${language} (if Hindi/Bilingual is selected, include warm Hinglish/Hindi phrases alongside clear English).
 Keep answers concise (3-5 sentences), reassuring, and easy to read aloud via text-to-speech.
@@ -288,22 +353,18 @@ Current Patient Snapshot:
 
 User Question: "${message}"`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: sysPrompt,
-      });
-
+    const result = await generateWithGeminiCascade(ai, { contents: sysPrompt });
+    if (result) {
       return {
-        reply: response.text,
-        engine: 'Google Gemini 2.5 Flash (@google/genai)',
+        reply: result.text,
+        model: result.model,
+        engine: result.engine,
         suggestedFollowUps: [
           'What is my next tablet today?',
           'Are there any food precautions for my medicines?',
           'Prepare questions for my visit with Dr. Mehta',
         ],
       };
-    } catch {
-      // Fall through to intelligent contextual responder
     }
   }
 
@@ -332,7 +393,7 @@ User Question: "${message}"`;
 
   return {
     reply,
-    engine: ai ? 'Google Gemini 2.5 Flash (@google/genai)' : 'KinCare Contextual AI Companion',
+    engine: 'KinCare Contextual AI Companion',
     suggestedFollowUps: [
       'What is my next tablet today?',
       'Tell me about my upcoming doctor appointment',
@@ -359,6 +420,47 @@ export async function generateDoctorVisitBrief({
   const latestVital = vitalsLog[0] || { systolic: 128, diastolic: 82, bloodSugarMgDl: 112, heartRate: 72 };
   const nextAppt = appointments[0] || { doctorName: 'Dr. Vikram Mehta', specialty: 'Cardiology', date: 'Upcoming' };
 
+  const ai = getGeminiClient(apiKey);
+  if (ai) {
+    const prompt = `Prepare a concise pre-visit clinical summary for ${elderProfile.name} (${elderProfile.age} yrs) ahead of their appointment with ${nextAppt.doctorName} (${nextAppt.specialty}).
+Active Medications: ${medications.map((m) => `${m.name} ${m.dosage} at ${m.scheduledTime} (${m.status})`).join('; ')}
+Latest Vitals: BP ${latestVital.systolic}/${latestVital.diastolic} mmHg, HR ${latestVital.heartRate} bpm, Fasting Glucose ${latestVital.bloodSugarMgDl} mg/dL.
+7-Day Adherence: ${avgAdherence}%.
+Elder Care Note: "${elderProfile.carePhilosophyNote}"
+
+Return ONLY valid JSON:
+{
+  "keyObservations": ["Observation 1", "Observation 2", "Observation 3"],
+  "questionsForDoctor": ["Question 1", "Question 2", "Question 3"]
+}`;
+
+    const result = await generateWithGeminiCascade(ai, {
+      contents: prompt,
+      config: { responseMimeType: 'application/json' },
+    });
+
+    if (result) {
+      try {
+        const parsed = JSON.parse(result.text);
+        if (Array.isArray(parsed.keyObservations) && Array.isArray(parsed.questionsForDoctor)) {
+          return {
+            generatedAt: new Date().toISOString(),
+            patientName: elderProfile.name,
+            age: elderProfile.age,
+            targetAppointment: `${nextAppt.doctorName} (${nextAppt.specialty}) — ${nextAppt.date}`,
+            overallAdherenceRate: `${avgAdherence}% (Last 7 Days)`,
+            vitalsSummary: `Latest BP: ${latestVital.systolic}/${latestVital.diastolic} mmHg | Pulse: ${latestVital.heartRate} bpm | Fasting Glucose: ${latestVital.bloodSugarMgDl} mg/dL`,
+            keyObservations: parsed.keyObservations,
+            questionsForDoctor: parsed.questionsForDoctor,
+            engine: result.engine,
+          };
+        }
+      } catch {
+        // Fall through to deterministic summary
+      }
+    }
+  }
+
   return {
     generatedAt: new Date().toISOString(),
     patientName: elderProfile.name,
@@ -376,5 +478,60 @@ export async function generateDoctorVisitBrief({
       nextAppt.elderQuestions || 'Can we review the morning blood pressure dosage based on my 14-day home log?',
       'Should we add an annual Vitamin B12 level check given ongoing Metformin XR therapy?',
     ],
+    engine: 'KinCare Clinical Brief Engine',
+  };
+}
+
+/**
+ * 5. Intelligent Caregiver Notification Insight Generator (for Missed Doses like 9:00 AM Telmisartan)
+ */
+export async function generateIntelligentCaregiverAlert({
+  elderProfile,
+  medication,
+  vitalsLog = [],
+  apiKey = '',
+}) {
+  const latestVital = vitalsLog[0] || { systolic: 128, diastolic: 82, bloodSugarMgDl: 112 };
+  const ai = getGeminiClient(apiKey);
+
+  if (ai && medication) {
+    const prompt = `You are an AI elderly care coordinator assisting a family member and home caregiver.
+Patient: ${elderProfile.name} (${elderProfile.age} yrs, Conditions: ${elderProfile.conditions.join(', ')}).
+Missed Medication: ${medication.name} (${medication.dosage}) scheduled at ${medication.scheduledTime} (${medication.mealInstruction}). Purpose: ${medication.purpose}.
+Latest Morning Vitals: BP ${latestVital.systolic}/${latestVital.diastolic} mmHg, Glucose ${latestVital.bloodSugarMgDl} mg/dL.
+
+Return ONLY valid JSON:
+{
+  "urgency": "Moderate" | "High",
+  "headline": "Short actionable headline for caregiver email",
+  "guidance": "2-sentence empathetic, practical guidance for the family member or caregiver checking on the elder (never advise double-dosing)",
+  "suggestedAction": "Specific next step (e.g. Call gently, verify morning meal, check BP before catch-up dose)"
+}`;
+
+    const result = await generateWithGeminiCascade(ai, {
+      contents: prompt,
+      config: { responseMimeType: 'application/json' },
+    });
+
+    if (result) {
+      try {
+        const parsed = JSON.parse(result.text);
+        return {
+          ...parsed,
+          model: result.model,
+          engine: result.engine,
+        };
+      } catch {
+        // Fall through to deterministic caregiver guidance
+      }
+    }
+  }
+
+  return {
+    urgency: 'High',
+    headline: `Check on ${elderProfile.preferredName}'s ${medication?.scheduledTime || '09:00'} ${medication?.name || 'Medication'} Dose`,
+    guidance: `${elderProfile.preferredName} has not confirmed taking ${medication?.name || 'Telmisartan'} (${medication?.dosage || '40 mg'}) scheduled at ${medication?.scheduledTime || '09:00'}. Because this medication supports ${medication?.purpose || 'Blood Pressure'}, check their latest BP (${latestVital.systolic}/${latestVital.diastolic} mmHg) and gently confirm if breakfast was completed before giving the dose (never double-dose).`,
+    suggestedAction: `Call ${elderProfile.preferredName} (${elderProfile.emergencyPhone}) or ask the caregiver to assist with a glass of water and confirm intake in KinCare AI.`,
+    engine: 'KinCare Intelligent Caregiver Engine',
   };
 }

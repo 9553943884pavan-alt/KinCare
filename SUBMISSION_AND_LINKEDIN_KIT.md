@@ -15,7 +15,7 @@ Use this ready-to-copy kit for your **Platform Submission (Requirement 4/4)**, *
 2. **Dual-Interface Senior Accessibility (WCAG AAA):** Features a dedicated **Senior Comfort Mode** with visual pill guides (color/shape), Web Speech API voice readouts, microphone voice input, adjustable font scaling (`A/A+/A++`), and high-contrast view alongside a **Family & Caretaker Command Center**.
 3. **Elderly Autonomy & Decision Charter:** Goes beyond basic reminder apps by empowering seniors to approve or decline proposed schedule changes, log daily vitals & mood, and control privacy/escalation rules.
 4. **Proactive Multi-Tier Email Reminder Engine:** Automatically detects missed medications, upcoming doses, and doctor appointments, dispatching rich HTML email alerts to the Care Circle with a built-in Live Email Outbox Inspector.
-5. **Google Gemini 2.5 Flash Clinical Intelligence:** Includes an **AI Prescription & Label Scanner**, **Drug-Drug & Food Interaction Guardian**, **Bilingual Voice Care Companion**, **Pre-Visit Doctor Clinical Brief Generator**, and a **One-Tap SOS & Printable QR Emergency Medical ID Card**.
+5. **Google Gemini 3.5 Flash Lite Clinical Intelligence:** Includes an **AI Prescription & Label Scanner**, **Drug-Drug & Food Interaction Guardian**, **Bilingual Voice Care Companion**, **Intelligent Caregiver Missed-Dose Alerts**, **Pre-Visit Doctor Clinical Brief Generator**, and a **One-Tap SOS & Printable QR Emergency Medical ID Card**.
 
 ---
 

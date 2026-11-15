@@ -16,6 +16,7 @@ import {
   parsePrescriptionInput,
   askCareCompanion,
   generateDoctorVisitBrief,
+  generateIntelligentCaregiverAlert,
 } from './services/geminiService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -56,13 +57,17 @@ export function createApp() {
   // 1. Health & Readiness Endpoint (Cloud Run & Platform Assessment Check)
   app.get('/api/health', (_req, res) => {
     const store = getStore();
+    const sanitize = (v) => String(v || '').trim().replace(/^["']|["']$/g, '').trim();
     res.status(200).json({
       status: 'healthy',
       service: 'kincare-ai-elderly-care-platform',
       timestamp: new Date().toISOString(),
       googleServices: {
         geminiSdk: '@google/genai',
-        model: 'gemini-2.5-flash',
+        model: sanitize(process.env.GEMINI_MODEL) || 'gemini-3.5-flash-lite',
+        geminiConfigured: Boolean(sanitize(process.env.GEMINI_API_KEY)),
+        resendConfigured: Boolean(sanitize(process.env.RESEND_API_KEY)),
+        alertRecipient: sanitize(process.env.ALERT_EMAIL_RECIPIENT) || '9553943884pavan@gmail.com',
         cloudRunReady: true,
       },
       ecosystemStats: {
@@ -159,7 +164,7 @@ export function createApp() {
   // Add a new Care Circle Member with their own passcode
   const NewMemberSchema = z.object({
     name: z.string().min(2),
-    role: z.enum(['elder', 'family', 'caretaker']),
+    role: z.enum(['elder', 'family', 'caretaker', 'caregiver']),
     relationship: z.string().min(2),
     email: z.string().email(),
     phone: z.string().optional(),
@@ -172,30 +177,31 @@ export function createApp() {
       return res.status(400).json({ error: 'Invalid Care Circle member details', details: parsed.error.flatten() });
     }
     const data = parsed.data;
+    const normalizedRole = data.role === 'caregiver' ? 'caretaker' : data.role;
     const store = getStore();
     const roleLabelMap = {
-      elder: 'Elderly Individual (Centre of Care)',
+      elder: 'Elderly Person (Centre of Care)',
       family: `Family Member (${data.relationship})`,
-      caretaker: `Caretaker (${data.relationship})`,
+      caretaker: `Caregiver (${data.relationship})`,
     };
     const newMember = {
       id: `member-${Date.now()}`,
       name: data.name,
-      role: data.role,
-      roleLabel: roleLabelMap[data.role],
+      role: normalizedRole,
+      roleLabel: roleLabelMap[normalizedRole],
       relationship: data.relationship,
       email: data.email,
       phone: data.phone || '+91 98000 00000',
       passcodePlainHint: data.passcode,
       passcodeHash: hashPasscode(data.passcode),
-      avatarColor: data.role === 'family' ? 'bg-indigo-600' : 'bg-amber-600',
+      avatarColor: normalizedRole === 'family' ? 'bg-indigo-600' : 'bg-amber-600',
       permissions: ['view', 'add', 'edit', 'log_adherence', 'trigger_reminders'],
       notifyOnMissedMed: true,
       notifyOnUpcomingDose: true,
       notifyOnAppointment: true,
     };
     store.careCircleMembers.push(newMember);
-    addActivity(data.name, data.role, `Joined Care Circle as ${newMember.roleLabel}.`);
+    addActivity(data.name, normalizedRole, `Joined Care Circle as ${newMember.roleLabel}.`);
     persistState();
     res.status(201).json({ member: { ...newMember, passcodeHash: undefined } });
   });
@@ -339,9 +345,16 @@ export function createApp() {
 
       // Proactive email alert if medication is marked missed
       if (updated.status === 'missed' && store.elderProfile.autonomyPreferences.allowFamilyMissedDoseEscalation) {
+        const aiInsight = await generateIntelligentCaregiverAlert({
+          elderProfile: store.elderProfile,
+          medication: updated,
+          vitalsLog: store.vitalsLog,
+          apiKey: req.headers['x-gemini-api-key'] || '',
+        });
         autoEmailDispatched = await dispatchProactiveEmail({
           type: 'MISSED_MEDICATION',
           itemId: updated.id,
+          aiInsight,
           triggeredBy: 'Auto-Escalation Monitor',
         });
       }
@@ -586,6 +599,7 @@ export function createApp() {
 
   // 10. Proactive Email Reminder Endpoints
   app.post('/api/reminders/send', async (req, res) => {
+    const store = getStore();
     const {
       type = 'MISSED_MEDICATION',
       itemId = null,
@@ -594,15 +608,88 @@ export function createApp() {
       triggeredBy = 'Care Circle Member',
     } = req.body;
 
+    let aiInsight = null;
+    if (type === 'MISSED_MEDICATION') {
+      const targetMed =
+        (itemId && store.medications.find((m) => m.id === itemId)) ||
+        store.medications.find((m) => m.status === 'missed') ||
+        store.medications[0];
+      aiInsight = await generateIntelligentCaregiverAlert({
+        elderProfile: store.elderProfile,
+        medication: targetMed,
+        vitalsLog: store.vitalsLog,
+        apiKey: req.headers['x-gemini-api-key'] || '',
+      });
+    }
+
     const emailLog = await dispatchProactiveEmail({
       type,
       itemId,
       customRecipients,
       customNote,
+      aiInsight,
       triggeredBy,
     });
 
-    res.status(201).json({ emailLog });
+    res.status(201).json({ emailLog, aiInsight });
+  });
+
+  app.post('/api/reminders/simulate-9am-missed', async (req, res) => {
+    const store = getStore();
+    const force = Boolean(req.body?.force);
+    const targetMed =
+      store.medications.find((m) => m.scheduledTime === '09:00') ||
+      store.medications.find((m) => m.name.toLowerCase().includes('telmisartan')) ||
+      store.medications[0];
+
+    if (!targetMed) {
+      return res.status(404).json({ error: 'No 9:00 AM medication found in schedule.' });
+    }
+
+    if (targetMed.status === 'taken' && !force) {
+      return res.json({
+        simulated: false,
+        alreadyConfirmed: true,
+        medication: targetMed,
+        message: `${targetMed.name} (${targetMed.scheduledTime}) was already confirmed as taken.`,
+      });
+    }
+
+    targetMed.status = 'missed';
+    targetMed.lastUpdatedAt = new Date().toISOString();
+    targetMed.lastActionBy = '9:00 AM Auto-Escalation Monitor';
+
+    const apiKey = req.headers['x-gemini-api-key'] || req.body?.apiKey || '';
+    const aiInsight = await generateIntelligentCaregiverAlert({
+      elderProfile: store.elderProfile,
+      medication: targetMed,
+      vitalsLog: store.vitalsLog,
+      apiKey,
+    });
+
+    const emailLog = await dispatchProactiveEmail({
+      type: 'MISSED_MEDICATION',
+      itemId: targetMed.id,
+      aiInsight,
+      customNote:
+        req.body?.customNote ||
+        `9:00 AM dose check: ${store.elderProfile.preferredName} has not confirmed taking ${targetMed.name} (${targetMed.dosage}).`,
+      triggeredBy: '9:00 AM Missed Dose Detector + Gemini AI',
+    });
+
+    addActivity(
+      '9:00 AM Missed Dose Detector',
+      'system',
+      `Detected unconfirmed 09:00 AM ${targetMed.name}; generated Gemini AI guidance & emailed ${emailLog.recipients.join(', ')}.`
+    );
+    persistState();
+
+    return res.status(201).json({
+      simulated: true,
+      medication: targetMed,
+      aiInsight,
+      emailLog,
+    });
   });
 
   app.post('/api/reminders/auto-scan', async (_req, res) => {
@@ -612,9 +699,15 @@ export function createApp() {
     // 1. Check missed medications
     const missedMeds = store.medications.filter((m) => m.status === 'missed');
     for (const med of missedMeds) {
+      const aiInsight = await generateIntelligentCaregiverAlert({
+        elderProfile: store.elderProfile,
+        medication: med,
+        vitalsLog: store.vitalsLog,
+      });
       const log = await dispatchProactiveEmail({
         type: 'MISSED_MEDICATION',
         itemId: med.id,
+        aiInsight,
         triggeredBy: 'Proactive Auto-Scanner',
       });
       dispatched.push(log);
