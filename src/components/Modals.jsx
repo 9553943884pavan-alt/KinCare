@@ -504,3 +504,199 @@ export function EmergencyIdModal({ isOpen, onClose, elderProfile, medications = 
     </div>
   );
 }
+
+export function ElderProfileModal({ isOpen, onClose, onSave, elderProfile }) {
+  const [form, setForm] = useState({
+    name: '',
+    preferredName: '',
+    age: 74,
+    bloodGroup: 'O+',
+    weightKg: 68,
+    location: '',
+    emergencyPhone: '',
+    primaryDoctor: '',
+    conditions: '',
+    allergies: '',
+    carePhilosophyNote: '',
+  });
+
+  useEffect(() => {
+    if (elderProfile) {
+      setForm({
+        name: elderProfile.name || '',
+        preferredName: elderProfile.preferredName || '',
+        age: elderProfile.age ?? 74,
+        bloodGroup: elderProfile.bloodGroup || 'O+',
+        weightKg: elderProfile.weightKg ?? 68,
+        location: elderProfile.location || '',
+        emergencyPhone: elderProfile.emergencyPhone || '',
+        primaryDoctor: elderProfile.primaryDoctor || '',
+        conditions: Array.isArray(elderProfile.conditions)
+          ? elderProfile.conditions.join(', ')
+          : elderProfile.conditions || '',
+        allergies: Array.isArray(elderProfile.allergies)
+          ? elderProfile.allergies.join(', ')
+          : elderProfile.allergies || '',
+        carePhilosophyNote: elderProfile.carePhilosophyNote || '',
+      });
+    }
+  }, [elderProfile, isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSave({
+      ...form,
+      age: Number(form.age),
+      weightKg: Number(form.weightKg),
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div className="bg-white rounded-3xl max-w-xl w-full shadow-2xl border border-slate-200 overflow-hidden my-8">
+        <div className="bg-teal-800 text-white px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <Activity className="w-5 h-5 text-teal-200" />
+            <h3 className="font-bold text-lg">Edit Senior Patient Profile</h3>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/10" aria-label="Close modal">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Full Name *</label>
+              <input
+                type="text"
+                required
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Preferred Greeting Name</label>
+              <input
+                type="text"
+                value={form.preferredName}
+                onChange={(e) => setForm({ ...form, preferredName: e.target.value })}
+                placeholder="e.g. Ramesh Ji"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Age *</label>
+              <input
+                type="number"
+                min={1}
+                required
+                value={form.age}
+                onChange={(e) => setForm({ ...form, age: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Blood Group</label>
+              <input
+                type="text"
+                value={form.bloodGroup}
+                onChange={(e) => setForm({ ...form, bloodGroup: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Weight (kg)</label>
+              <input
+                type="number"
+                value={form.weightKg}
+                onChange={(e) => setForm({ ...form, weightKg: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Emergency Phone</label>
+              <input
+                type="text"
+                value={form.emergencyPhone}
+                onChange={(e) => setForm({ ...form, emergencyPhone: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Home Location</label>
+              <input
+                type="text"
+                value={form.location}
+                onChange={(e) => setForm({ ...form, location: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Primary Doctor</label>
+              <input
+                type="text"
+                value={form.primaryDoctor}
+                onChange={(e) => setForm({ ...form, primaryDoctor: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">Chronic Conditions (comma separated)</label>
+            <input
+              type="text"
+              value={form.conditions}
+              onChange={(e) => setForm({ ...form, conditions: e.target.value })}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">Known Allergies (comma separated)</label>
+            <input
+              type="text"
+              value={form.allergies}
+              onChange={(e) => setForm({ ...form, allergies: e.target.value })}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">Personal Care Philosophy Note</label>
+            <textarea
+              rows={2}
+              value={form.carePhilosophyNote}
+              onChange={(e) => setForm({ ...form, carePhilosophyNote: e.target.value })}
+              className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm"
+            />
+          </div>
+
+          <div className="flex justify-end gap-3 pt-3 border-t border-slate-200">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-semibold text-sm"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-6 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-sm cursor-pointer"
+            >
+              Save Profile Changes
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

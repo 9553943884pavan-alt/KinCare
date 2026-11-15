@@ -228,4 +228,59 @@ describe('KinCare AI — Elderly Care & Medication Management Platform API', () 
     expect(delRoutineRes.status).toBe(200);
     expect(delRoutineRes.body.deleted).toBe(true);
   });
+
+  it('persists authenticatedMember, updates elder profile, and manages care circle notification toggles & member removal', async () => {
+    const authRes = await request(app)
+      .post('/api/auth/verify-passcode')
+      .send({ passcode: '654321' });
+    expect(authRes.status).toBe(200);
+    expect(authRes.body.token).toBeTruthy();
+
+    const dashRes = await request(app)
+      .get('/api/dashboard')
+      .set('Authorization', `Bearer ${authRes.body.token}`);
+    expect(dashRes.status).toBe(200);
+    expect(dashRes.body.authenticatedMember).toBeTruthy();
+    expect(dashRes.body.authenticatedMember.role).toBe('family');
+
+    const profileRes = await request(app)
+      .put('/api/elder-profile')
+      .send({
+        age: 75,
+        bloodGroup: 'O+',
+        conditions: 'Hypertension, Mild Knee Osteoarthritis',
+        allergies: 'Penicillin',
+      });
+    expect(profileRes.status).toBe(200);
+    expect(profileRes.body.elderProfile.age).toBe(75);
+    expect(profileRes.body.elderProfile.conditions).toEqual([
+      'Hypertension',
+      'Mild Knee Osteoarthritis',
+    ]);
+    expect(profileRes.body.elderProfile.allergies).toEqual(['Penicillin']);
+
+    const addMemberRes = await request(app)
+      .post('/api/care-circle/members')
+      .send({
+        name: 'Dr. Kavita Rao',
+        role: 'caregiver',
+        relationship: 'Visiting Nurse',
+        email: 'kavita@example.com',
+        phone: '+91 98000 00000',
+        passcode: '778899',
+      });
+    expect(addMemberRes.status).toBe(201);
+    const memberId = addMemberRes.body.member.id;
+
+    const patchMemberRes = await request(app)
+      .patch(`/api/care-circle/members/${memberId}`)
+      .send({ notifyOnMissedMed: false });
+    expect(patchMemberRes.status).toBe(200);
+    expect(patchMemberRes.body.member.notifyOnMissedMed).toBe(false);
+
+    const delMemberRes = await request(app).delete(`/api/care-circle/members/${memberId}`);
+    expect(delMemberRes.status).toBe(200);
+    expect(delMemberRes.body.deleted).toBe(true);
+    expect(delMemberRes.body.id).toBe(memberId);
+  });
 });

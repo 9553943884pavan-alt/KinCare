@@ -30,16 +30,23 @@ import {
 
 import {
   apiFetch,
+  getStoredToken,
   setStoredToken,
   getCustomGeminiKey,
   setCustomGeminiKey,
   speakText,
   downloadAppointmentICS,
+  exportAdherenceReportCSV,
 } from './utils/api.js';
 import PasscodeModal from './components/PasscodeModal.jsx';
 import SeniorComfortView from './components/SeniorComfortView.jsx';
 import AuthOnboardingScreen from './components/AuthOnboardingScreen.jsx';
-import { MedicationModal, AppointmentModal, EmergencyIdModal } from './components/Modals.jsx';
+import {
+  MedicationModal,
+  AppointmentModal,
+  EmergencyIdModal,
+  ElderProfileModal,
+} from './components/Modals.jsx';
 
 export default function App() {
   const [dashboard, setDashboard] = useState(null);
@@ -60,6 +67,7 @@ export default function App() {
   const [apptModalOpen, setApptModalOpen] = useState(false);
   const [editingAppt, setEditingAppt] = useState(null);
   const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
+  const [elderProfileModalOpen, setElderProfileModalOpen] = useState(false);
 
   // Medication filters & Routine inputs
   const [slotFilter, setSlotFilter] = useState('All');
@@ -113,7 +121,13 @@ export default function App() {
     try {
       const data = await apiFetch('/api/dashboard');
       setDashboard(data);
-      if (!activeMember && data.careCircleMembers?.length > 0) {
+      if (data.authenticatedMember && getStoredToken()) {
+        if (!isAuthenticated) {
+          setActiveMember(data.authenticatedMember);
+          setIsAuthenticated(true);
+          setViewMode(data.authenticatedMember.role === 'elder' ? 'comfort' : 'command');
+        }
+      } else if (!activeMember && data.careCircleMembers?.length > 0) {
         setActiveMember(data.careCircleMembers[0]);
       }
       if (!selectedEmailLog && data.emailLogs?.length > 0) {
@@ -124,7 +138,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [activeMember, selectedEmailLog]);
+  }, [activeMember, selectedEmailLog, isAuthenticated]);
 
   useEffect(() => {
     fetchDashboardData();
@@ -191,6 +205,78 @@ export default function App() {
       body: JSON.stringify(memberData),
     });
     showToast(`Added ${memberData.name} to the Care Circle with passcode access!`);
+    await fetchDashboardData();
+  };
+
+  const handleToggleMemberNotify = async (memberId, field, nextVal) => {
+    await apiFetch(`/api/care-circle/members/${memberId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ [field]: nextVal }),
+    });
+    showToast('Updated Care Circle notification preference');
+    await fetchDashboardData();
+  };
+
+  const handleDeleteCareMember = async (memberId) => {
+    await apiFetch(`/api/care-circle/members/${memberId}`, { method: 'DELETE' });
+    showToast('Removed member from Care Circle');
+    await fetchDashboardData();
+  };
+
+  const handleSaveElderProfile = async (profilePayload) => {
+    await apiFetch('/api/elder-profile', {
+      method: 'PUT',
+      body: JSON.stringify(profilePayload),
+    });
+    setElderProfileModalOpen(false);
+    showToast(`Saved patient profile for ${profilePayload.name}`);
+    await fetchDashboardData();
+  };
+
+  const handleRestockMedication = async (med) => {
+    const nextStock = (Number(med.stockRemaining) || 0) + 30;
+    await apiFetch(`/api/medications/${med.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        stockRemaining: nextStock,
+        actorName: activeMember?.name || 'Care Circle',
+        actorRole: activeMember?.role || 'family',
+      }),
+    });
+    showToast(`Refilled ${med.name}: ${nextStock} pills in stock`);
+    await fetchDashboardData();
+  };
+
+  const handleSnoozeMedication = async (med) => {
+    await apiFetch(`/api/medications/${med.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        snoozedUntil: '15 mins',
+        notes: 'Snoozed 15 minutes from Senior Voice Reminder',
+        actorName: dashboard?.elderProfile?.name || 'Senior',
+        actorRole: 'elder',
+      }),
+    });
+    showToast(`Snoozed ${med.name} reminder for 15 minutes`);
+    await fetchDashboardData();
+  };
+
+  const handleToggleAppointmentStatus = async (appt) => {
+    const nextStatus = appt.status === 'completed' ? 'Scheduled' : 'completed';
+    await apiFetch(`/api/appointments/${appt.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: nextStatus }),
+    });
+    showToast(`Marked appointment with ${appt.doctorName} as ${nextStatus}`);
+    await fetchDashboardData();
+  };
+
+  const handleSaveAppointmentQuestion = async (appt, elderQuestions) => {
+    await apiFetch(`/api/appointments/${appt.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ elderQuestions }),
+    });
+    showToast(`Saved question for ${appt.doctorName}`);
     await fetchDashboardData();
   };
 
@@ -867,6 +953,8 @@ export default function App() {
             onTriggerSOS={handleTriggerSOS}
             onOpenEmergencyCard={() => setEmergencyModalOpen(true)}
             onLogVitals={handleLogVitals}
+            onSnoozeMedication={handleSnoozeMedication}
+            onSaveAppointmentQuestion={handleSaveAppointmentQuestion}
           />
         ) : (
           <div className="space-y-6">
@@ -940,6 +1028,28 @@ export default function App() {
                       </h2>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setElderProfileModalOpen(true)}
+                        className="px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 text-white text-xs font-extrabold cursor-pointer"
+                      >
+                        Edit Patient Profile
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          exportAdherenceReportCSV({
+                            elderProfile,
+                            medications,
+                            vitalsLog,
+                            appointments,
+                          })
+                        }
+                        className="px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        CSV Care Report
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleQuickRoleSwitch('elder')}
@@ -1137,6 +1247,14 @@ export default function App() {
                             )}
                             <button
                               type="button"
+                              onClick={() => handleRestockMedication(med)}
+                              className="px-2.5 py-1.5 rounded-xl border border-teal-300 bg-teal-50 hover:bg-teal-100 text-teal-900 text-[11px] font-bold cursor-pointer"
+                              title="Refill +30 pills into stock"
+                            >
+                              + Refill 30
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => {
                                 setEditingMed(med);
                                 setMedModalOpen(true);
@@ -1200,20 +1318,62 @@ export default function App() {
                         {careCircleMembers.map((m) => (
                           <div
                             key={m.id}
-                            className="p-3 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs"
+                            className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs"
                           >
-                            <div>
-                              <p className="font-bold text-slate-900">
-                                {m.name}{' '}
-                                <span className="text-[10px] uppercase px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 ml-1">
-                                  {m.role}
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <p className="font-bold text-slate-900">
+                                  {m.name}{' '}
+                                  <span className="text-[10px] uppercase px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 ml-1">
+                                    {m.role}
+                                  </span>
+                                </p>
+                                <p className="text-slate-500">{m.email}</p>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono text-[11px] font-bold text-slate-600 bg-white px-2 py-1 rounded-lg border border-slate-200">
+                                  PIN: {m.passcodePlainHint || '••••••'}
                                 </span>
-                              </p>
-                              <p className="text-slate-500">{m.email}</p>
+                                {m.role !== 'elder' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteCareMember(m.id)}
+                                    className="p-1.5 rounded-lg border border-rose-200 bg-white text-rose-600 hover:bg-rose-50 cursor-pointer"
+                                    title="Remove Care Circle member"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                            <span className="font-mono text-[11px] font-bold text-slate-600 bg-white px-2 py-1 rounded-lg border border-slate-200">
-                              PIN: {m.passcodePlainHint || '••••••'}
-                            </span>
+
+                            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/70">
+                              <span className="text-[10px] font-bold uppercase text-slate-500 mr-1">
+                                Email Alerts:
+                              </span>
+                              {[
+                                { key: 'notifyOnMissedMed', label: 'Missed Med' },
+                                { key: 'notifyOnUpcomingDose', label: 'Upcoming' },
+                                { key: 'notifyOnAppointment', label: 'Visits' },
+                              ].map((pref) => {
+                                const enabled = Boolean(m[pref.key]);
+                                return (
+                                  <button
+                                    key={pref.key}
+                                    type="button"
+                                    onClick={() => handleToggleMemberNotify(m.id, pref.key, !enabled)}
+                                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer ${
+                                      enabled
+                                        ? 'bg-emerald-100 border-emerald-300 text-emerald-900'
+                                        : 'bg-white border-slate-300 text-slate-500'
+                                    }`}
+                                  >
+                                    {enabled ? '✓ ' : ''}
+                                    {pref.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1409,6 +1569,21 @@ export default function App() {
                     <div className="flex flex-wrap items-center gap-2.5">
                       <button
                         type="button"
+                        onClick={() =>
+                          exportAdherenceReportCSV({
+                            elderProfile,
+                            medications,
+                            vitalsLog,
+                            appointments,
+                          })
+                        }
+                        className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Download className="w-4 h-4 text-teal-700" />
+                        Export CSV Report
+                      </button>
+                      <button
+                        type="button"
                         onClick={handleRunInteractionCheck}
                         disabled={interactionLoading}
                         className="px-4 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
@@ -1537,9 +1712,18 @@ export default function App() {
                         </div>
 
                         <div className="pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-xs font-bold text-slate-600">
-                            Stock: <strong>{med.stockRemaining} pills</strong>
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-slate-600">
+                              Stock: <strong>{med.stockRemaining} pills</strong>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleRestockMedication(med)}
+                              className="px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 border border-teal-300 text-teal-900 text-[11px] font-bold cursor-pointer"
+                            >
+                              + Refill 30
+                            </button>
+                          </div>
                           <div className="flex items-center gap-1.5">
                             {['taken', 'upcoming', 'missed'].map((st) => (
                               <button
@@ -1651,7 +1835,19 @@ export default function App() {
                             </p>
                           </div>
 
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleAppointmentStatus(appt)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer ${
+                                appt.status === 'completed'
+                                  ? 'bg-emerald-700 text-white'
+                                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300'
+                              }`}
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              {appt.status === 'completed' ? 'Completed' : 'Mark Done'}
+                            </button>
                             <button
                               type="button"
                               onClick={() => downloadAppointmentICS(appt, elderProfile.name)}
@@ -2304,6 +2500,13 @@ export default function App() {
         elderProfile={elderProfile}
         medications={medications}
         careCircleMembers={careCircleMembers}
+      />
+
+      <ElderProfileModal
+        isOpen={elderProfileModalOpen}
+        onClose={() => setElderProfileModalOpen(false)}
+        onSave={handleSaveElderProfile}
+        elderProfile={elderProfile}
       />
     </div>
   );

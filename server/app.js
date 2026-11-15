@@ -320,10 +320,53 @@ export function createApp() {
     res.status(201).json({ member: { ...newMember, passcodeHash: undefined } });
   });
 
+  app.patch('/api/care-circle/members/:id', (req, res) => {
+    const store = getStore();
+    const member = store.careCircleMembers.find((m) => m.id === req.params.id);
+    if (!member) {
+      return res.status(404).json({ error: 'Care circle member not found' });
+    }
+    const allowedFields = [
+      'notifyOnMissedMed',
+      'notifyOnUpcomingDose',
+      'notifyOnAppointment',
+      'email',
+      'phone',
+      'relationship',
+    ];
+    for (const key of allowedFields) {
+      if (req.body[key] !== undefined) {
+        member[key] = req.body[key];
+      }
+    }
+    addActivity(member.name, member.role, `Updated alert & contact preferences for ${member.name}.`);
+    persistState();
+    const { passcodeHash: _removed, ...safeMember } = member;
+    res.json({ member: safeMember });
+  });
+
+  app.delete('/api/care-circle/members/:id', (req, res) => {
+    const store = getStore();
+    const idx = store.careCircleMembers.findIndex((m) => m.id === req.params.id);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Care circle member not found' });
+    }
+    if (store.careCircleMembers[idx].role === 'elder') {
+      return res.status(400).json({ error: 'Primary elderly care profile cannot be deleted.' });
+    }
+    const [removed] = store.careCircleMembers.splice(idx, 1);
+    addActivity('Care Circle', 'family', `Removed ${removed.name} from Care Circle access.`);
+    persistState();
+    res.json({ deleted: true, id: removed.id });
+  });
+
   // 4. Unified Dashboard Data
-  app.get('/api/dashboard', (_req, res) => {
+  app.get('/api/dashboard', (req, res) => {
     const store = getStore();
     const sanitizedMembers = store.careCircleMembers.map(({ passcodeHash, ...rest }) => rest);
+    const authenticatedMember = req.user
+      ? sanitizedMembers.find((m) => m.id === req.user.id) || null
+      : null;
 
     const totalMeds = store.medications.length;
     const takenMeds = store.medications.filter((m) => m.status === 'taken').length;
@@ -332,6 +375,7 @@ export function createApp() {
     const adherenceRate = totalMeds > 0 ? Math.round((takenMeds / totalMeds) * 100) : 100;
 
     res.json({
+      authenticatedMember,
       elderProfile: store.elderProfile,
       careCircleMembers: sanitizedMembers,
       medications: store.medications,
@@ -695,6 +739,59 @@ export function createApp() {
     );
     persistState();
     res.json({ decision: item });
+  });
+
+  app.put('/api/elder-profile', (req, res) => {
+    const store = getStore();
+    const {
+      name,
+      preferredName,
+      age,
+      bloodGroup,
+      weightKg,
+      location,
+      emergencyPhone,
+      primaryDoctor,
+      conditions,
+      allergies,
+      carePhilosophyNote,
+    } = req.body || {};
+
+    if (name && String(name).trim()) {
+      store.elderProfile.name = String(name).trim();
+      store.elderProfile.preferredName = preferredName
+        ? String(preferredName).trim()
+        : String(name).trim().split(' ')[0];
+    } else if (preferredName && String(preferredName).trim()) {
+      store.elderProfile.preferredName = String(preferredName).trim();
+    }
+    if (age !== undefined && Number(age) > 0) store.elderProfile.age = Number(age);
+    if (bloodGroup !== undefined) store.elderProfile.bloodGroup = String(bloodGroup).trim();
+    if (weightKg !== undefined && Number(weightKg) > 0) store.elderProfile.weightKg = Number(weightKg);
+    if (location !== undefined) store.elderProfile.location = String(location).trim();
+    if (emergencyPhone !== undefined) store.elderProfile.emergencyPhone = String(emergencyPhone).trim();
+    if (primaryDoctor !== undefined) store.elderProfile.primaryDoctor = String(primaryDoctor).trim();
+    if (carePhilosophyNote !== undefined) store.elderProfile.carePhilosophyNote = String(carePhilosophyNote).trim();
+
+    if (Array.isArray(conditions)) {
+      store.elderProfile.conditions = conditions.map((c) => String(c).trim()).filter(Boolean);
+    } else if (typeof conditions === 'string') {
+      store.elderProfile.conditions = conditions.split(',').map((c) => c.trim()).filter(Boolean);
+    }
+
+    if (Array.isArray(allergies)) {
+      store.elderProfile.allergies = allergies.map((a) => String(a).trim()).filter(Boolean);
+    } else if (typeof allergies === 'string') {
+      store.elderProfile.allergies = allergies.split(',').map((a) => a.trim()).filter(Boolean);
+    }
+
+    addActivity(
+      req.user?.name || 'Care Circle',
+      req.user?.role || 'family',
+      `Updated patient medical profile for ${store.elderProfile.name}.`
+    );
+    persistState();
+    res.json({ elderProfile: store.elderProfile });
   });
 
   app.put('/api/elder-profile/autonomy', (req, res) => {
