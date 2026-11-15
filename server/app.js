@@ -25,6 +25,9 @@ const DIST_DIR = path.resolve(__dirname, '../dist');
 export function createApp() {
   const app = express();
 
+  // Trust Render / Cloud Run / Vercel reverse proxy headers (fixes express-rate-limit X-Forwarded-For validation)
+  app.set('trust proxy', 1);
+
   // Security & Performance Middleware (Evaluated by Platform Code Assessment)
   app.use(
     helmet({
@@ -41,6 +44,7 @@ export function createApp() {
     max: 100,
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { xForwardedForHeader: false },
     message: { error: 'Too many authentication attempts, please try again shortly.' },
   });
 

@@ -1,7 +1,8 @@
 # KinCare AI — Smart Elderly Care & Medication Management Platform
 
 > **Built for Google for Developers × Hack2Skill — PromptWars x Catalyst (Build with AI)**  
-> *Keeping elderly individuals at the centre of their own healthcare decisions through a secure, passcode-protected Care Circle, proactive email escalations, and Google Gemini AI.*
+> *Keeping elderly individuals at the centre of their own healthcare decisions through a secure, passcode-protected Care Circle, proactive email escalations, and Google Gemini AI.*  
+> **Live App:** https://kincare-72je.onrender.com | **GitHub:** https://github.com/9553943884pavan-alt/KinCare
 
 ---
 
