@@ -25,6 +25,8 @@
   "license": "MIT",
   "dependencies": {
     "@google/genai": "^1.0.0",
+    "@tailwindcss/vite": "^4.0.6",
+    "@vitejs/plugin-react": "^4.3.4",
     "compression": "^1.8.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
@@ -35,15 +37,13 @@
     "nodemailer": "^10.5.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.6",
+    "vite": "^6.1.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.0.6",
-    "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
     "supertest": "^7.0.0",
-    "tailwindcss": "^4.0.6",
-    "vite": "^6.1.0",
     "vitest": "^5.1.0"
   },
   "engines": {

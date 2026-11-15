@@ -113,7 +113,7 @@ gcloud run deploy kincare-ai-platform \
 ### Option B: Render (One-Click via `render.yaml`)
 1. Push your code to a public GitHub repository.
 2. In Render Dashboard → **New + → Blueprint** (or Web Service) and connect your repo.
-3. Render reads `render.yaml` (`npm install && npm run build` and `npm start` on Port `8080`, health check `/api/health`).
+3. Render reads `render.yaml` (`npm install --include=dev && npm run build` and `npm start` on Port `8080`, health check `/api/health`).
 4. Add `GEMINI_API_KEY`, `GEMINI_MODEL=gemini-3.5-flash-lite`, `RESEND_API_KEY`, `ALERT_EMAIL_RECIPIENT`, and `SESSION_SECRET` under **Environment**.
 
 ### Option C: Vercel (`vercel.json` + `api/index.js`)
