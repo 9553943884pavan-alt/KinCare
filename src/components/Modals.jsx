@@ -231,8 +231,8 @@ export function MedicationModal({ isOpen, onClose, onSave, initialData = null })
   );
 }
 
-export function AppointmentModal({ isOpen, onClose, onSave }) {
-  const [form, setForm] = useState({
+export function AppointmentModal({ isOpen, onClose, onSave, initialData = null }) {
+  const getEmptyForm = () => ({
     doctorName: '',
     specialty: 'Cardiology',
     hospital: 'Apollo Hospital, Bengaluru',
@@ -243,6 +243,26 @@ export function AppointmentModal({ isOpen, onClose, onSave }) {
     preparationNotes: '',
     elderQuestions: '',
   });
+
+  const [form, setForm] = useState(getEmptyForm);
+
+  useEffect(() => {
+    if (initialData) {
+      setForm({
+        doctorName: initialData.doctorName || '',
+        specialty: initialData.specialty || 'Cardiology',
+        hospital: initialData.hospital || 'Apollo Hospital, Bengaluru',
+        date: initialData.date || new Date(Date.now() + 86400000 * 4).toISOString().split('T')[0],
+        time: initialData.time || '10:30',
+        mode: initialData.mode || 'In-Person Consultation',
+        accompaniedBy: initialData.accompaniedBy || 'Priya Sharma (Daughter)',
+        preparationNotes: initialData.preparationNotes || '',
+        elderQuestions: initialData.elderQuestions || '',
+      });
+    } else {
+      setForm(getEmptyForm());
+    }
+  }, [initialData, isOpen]);
 
   if (!isOpen) return null;
 
@@ -261,7 +281,9 @@ export function AppointmentModal({ isOpen, onClose, onSave }) {
         <div className="bg-indigo-800 text-white px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <Calendar className="w-5 h-5 text-indigo-200" />
-            <h3 className="font-bold text-lg">Schedule Medical Appointment</h3>
+            <h3 className="font-bold text-lg">
+              {initialData ? 'Edit Medical Appointment' : 'Schedule Medical Appointment'}
+            </h3>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/10" aria-label="Close modal">
             <X className="w-5 h-5" />
@@ -368,7 +390,7 @@ export function AppointmentModal({ isOpen, onClose, onSave }) {
               type="submit"
               className="px-6 py-2.5 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white font-bold text-sm cursor-pointer"
             >
-              Save Appointment
+              {initialData ? 'Save Appointment Changes' : 'Save Appointment'}
             </button>
           </div>
         </form>

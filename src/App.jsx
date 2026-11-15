@@ -58,6 +58,7 @@ export default function App() {
   const [medModalOpen, setMedModalOpen] = useState(false);
   const [editingMed, setEditingMed] = useState(null);
   const [apptModalOpen, setApptModalOpen] = useState(false);
+  const [editingAppt, setEditingAppt] = useState(null);
   const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
 
   // Medication filters & Routine inputs
@@ -65,10 +66,23 @@ export default function App() {
   const [newRoutineTitle, setNewRoutineTitle] = useState('');
   const [newRoutineTime, setNewRoutineTime] = useState('10:00');
 
-  // Proactive Email state
+  // Collaborative Vitals & Elder Autonomy Proposal state (Command Center)
+  const [proposalTitle, setProposalTitle] = useState('');
+  const [proposalReason, setProposalReason] = useState('');
+  const [cmdVitals, setCmdVitals] = useState({
+    systolic: 126,
+    diastolic: 80,
+    heartRate: 72,
+    bloodSugarMgDl: 110,
+    mood: 'Comfortable',
+  });
+
+  // Proactive Email & Live Auto-Watcher state
   const [selectedEmailLog, setSelectedEmailLog] = useState(null);
   const [emailCustomNote, setEmailCustomNote] = useState('');
   const [emailSending, setEmailSending] = useState(false);
+  const [autoWatcherActive, setAutoWatcherActive] = useState(true);
+  const [lastWatcherCheck, setLastWatcherCheck] = useState('Active just now');
   const [toastBanner, setToastBanner] = useState(null);
 
   // Gemini AI Studio state
@@ -83,6 +97,12 @@ export default function App() {
   const [doctorBrief, setDoctorBrief] = useState(null);
   const [doctorBriefLoading, setDoctorBriefLoading] = useState(false);
   const [geminiKeyInput, setGeminiKeyInput] = useState(getCustomGeminiKey());
+  const [aiCompanionQuery, setAiCompanionQuery] = useState(
+    'What is Ramesh Ji’s next tablet today and what dietary precaution applies?'
+  );
+  const [aiCompanionLang, setAiCompanionLang] = useState('English');
+  const [aiCompanionReply, setAiCompanionReply] = useState(null);
+  const [aiCompanionLoading, setAiCompanionLoading] = useState(false);
 
   const showToast = (title, type = 'success') => {
     setToastBanner({ title, type });
@@ -115,6 +135,14 @@ export default function App() {
     html.classList.remove('font-scale-normal', 'font-scale-large', 'font-scale-xlarge');
     html.classList.add(`font-scale-${fontScale}`);
   }, [fontScale]);
+
+  useEffect(() => {
+    if (!autoWatcherActive || !isAuthenticated) return undefined;
+    const timer = setInterval(() => {
+      setLastWatcherCheck(new Date().toLocaleTimeString());
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [autoWatcherActive, isAuthenticated]);
 
   // Passcode Authentication & Account Signup Handlers
   const handleVerifyPasscode = async (passcode, memberId, email = '') => {
@@ -252,17 +280,35 @@ export default function App() {
     await fetchDashboardData();
   };
 
+  const handleDeleteRoutine = async (routineId) => {
+    await apiFetch(`/api/routines/${routineId}`, { method: 'DELETE' });
+    showToast('Removed daily healthcare routine');
+    await fetchDashboardData();
+  };
+
   // Appointment Handlers
   const handleSaveAppointment = async (apptPayload) => {
-    await apiFetch('/api/appointments', {
-      method: 'POST',
-      body: JSON.stringify({
-        ...apptPayload,
-        actorName: activeMember?.name,
-      }),
-    });
+    if (editingAppt) {
+      await apiFetch(`/api/appointments/${editingAppt.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          ...apptPayload,
+          actorName: activeMember?.name,
+        }),
+      });
+      showToast(`Updated appointment with ${apptPayload.doctorName}`);
+    } else {
+      await apiFetch('/api/appointments', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...apptPayload,
+          actorName: activeMember?.name,
+        }),
+      });
+      showToast(`Scheduled appointment with ${apptPayload.doctorName}`);
+    }
     setApptModalOpen(false);
-    showToast(`Scheduled appointment with ${apptPayload.doctorName}`);
+    setEditingAppt(null);
     await fetchDashboardData();
   };
 
@@ -273,6 +319,37 @@ export default function App() {
   };
 
   // Autonomy & Vitals Handlers
+  const handleCreateProposal = async (e) => {
+    e.preventDefault();
+    if (!proposalTitle.trim()) return;
+    await apiFetch('/api/autonomy', {
+      method: 'POST',
+      body: JSON.stringify({
+        proposedBy: activeMember
+          ? `${activeMember.name} (${activeMember.role === 'caretaker' ? 'Caregiver' : activeMember.role})`
+          : 'Family Member',
+        title: proposalTitle.trim(),
+        reason:
+          proposalReason.trim() || 'Proposed in Care Circle portal for elderly confirmation.',
+      }),
+    });
+    setProposalTitle('');
+    setProposalReason('');
+    showToast('Sent schedule proposal to Elderly Person for 1-tap approval');
+    await fetchDashboardData();
+  };
+
+  const handleSubmitCommandVitals = async (e) => {
+    e.preventDefault();
+    await handleLogVitals({
+      ...cmdVitals,
+      systolic: Number(cmdVitals.systolic),
+      diastolic: Number(cmdVitals.diastolic),
+      heartRate: Number(cmdVitals.heartRate),
+      bloodSugarMgDl: Number(cmdVitals.bloodSugarMgDl),
+      loggedBy: activeMember?.name || 'Caregiver',
+    });
+  };
   const handleResolveAutonomy = async (decisionId, status, elderResponseNote) => {
     await apiFetch(`/api/autonomy/${decisionId}`, {
       method: 'PATCH',
@@ -448,6 +525,19 @@ export default function App() {
       method: 'POST',
       body: JSON.stringify({ message, language }),
     });
+  };
+
+  const handleAskAiHubCompanion = async (e) => {
+    if (e) e.preventDefault();
+    if (!aiCompanionQuery.trim()) return;
+    setAiCompanionLoading(true);
+    try {
+      const res = await handleAskCompanion(aiCompanionQuery.trim(), aiCompanionLang);
+      setAiCompanionReply(res);
+      showToast('AI Care Companion response generated');
+    } finally {
+      setAiCompanionLoading(false);
+    }
   };
 
   const handleResetDemo = async () => {
@@ -1131,6 +1221,155 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Collaborative Caregiver Vitals Logger & Elder Autonomy Proposal Center */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Log Clinical Vitals & Mood */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-base font-extrabold text-slate-900">
+                          Clinical Vitals &amp; Check-In Logger
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          Record BP, Heart Rate, Sugar &amp; Mood (syncs to Doctor Brief &amp; Daily Digest)
+                        </p>
+                      </div>
+                      <HeartPulse className="w-5 h-5 text-rose-600" />
+                    </div>
+
+                    <form onSubmit={handleSubmitCommandVitals} className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        BP Systolic
+                        <input
+                          type="number"
+                          value={cmdVitals.systolic}
+                          onChange={(e) => setCmdVitals({ ...cmdVitals, systolic: e.target.value })}
+                          className="mt-1 w-full px-2.5 py-2 rounded-xl border border-slate-300 text-xs font-bold"
+                        />
+                      </label>
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        BP Diastolic
+                        <input
+                          type="number"
+                          value={cmdVitals.diastolic}
+                          onChange={(e) => setCmdVitals({ ...cmdVitals, diastolic: e.target.value })}
+                          className="mt-1 w-full px-2.5 py-2 rounded-xl border border-slate-300 text-xs font-bold"
+                        />
+                      </label>
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        Pulse (bpm)
+                        <input
+                          type="number"
+                          value={cmdVitals.heartRate}
+                          onChange={(e) => setCmdVitals({ ...cmdVitals, heartRate: e.target.value })}
+                          className="mt-1 w-full px-2.5 py-2 rounded-xl border border-slate-300 text-xs font-bold"
+                        />
+                      </label>
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        Glucose mg/dL
+                        <input
+                          type="number"
+                          value={cmdVitals.bloodSugarMgDl}
+                          onChange={(e) =>
+                            setCmdVitals({ ...cmdVitals, bloodSugarMgDl: e.target.value })
+                          }
+                          className="mt-1 w-full px-2.5 py-2 rounded-xl border border-slate-300 text-xs font-bold"
+                        />
+                      </label>
+                      <div className="flex items-end col-span-2 sm:col-span-1">
+                        <button
+                          type="submit"
+                          className="w-full py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-extrabold cursor-pointer"
+                        >
+                          Log Vitals
+                        </button>
+                      </div>
+                    </form>
+
+                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                      {vitalsLog.slice(0, 4).map((v) => (
+                        <div
+                          key={v.id}
+                          className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs"
+                        >
+                          <span className="font-bold text-slate-800">
+                            BP {v.systolic}/{v.diastolic} • HR {v.heartRate || 72} bpm • Glucose{' '}
+                            {v.bloodSugarMgDl} mg/dL
+                          </span>
+                          <span className="text-slate-500">
+                            {v.mood} ({v.recordedAt})
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Propose Schedule Change for Elder Approval */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-base font-extrabold text-slate-900">
+                          Elder Consent &amp; Autonomy Proposals
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          Propose care changes for {elderProfile.preferredName}&apos;s 1-tap Yes/No approval in Senior View
+                        </p>
+                      </div>
+                      <ShieldCheck className="w-5 h-5 text-indigo-700" />
+                    </div>
+
+                    <form onSubmit={handleCreateProposal} className="space-y-2.5">
+                      <input
+                        type="text"
+                        value={proposalTitle}
+                        onChange={(e) => setProposalTitle(e.target.value)}
+                        placeholder="Proposal title (e.g. Shift Evening Walk to 5:30 PM)"
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs font-semibold"
+                      />
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={proposalReason}
+                          onChange={(e) => setProposalReason(e.target.value)}
+                          placeholder="Plain-language reason for elder..."
+                          className="flex-1 px-3.5 py-2 rounded-xl border border-slate-300 text-xs"
+                        />
+                        <button
+                          type="submit"
+                          className="px-4 py-2 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-extrabold shrink-0 cursor-pointer"
+                        >
+                          Send Request
+                        </button>
+                      </div>
+                    </form>
+
+                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                      {autonomyDecisions.slice(0, 4).map((dec) => (
+                        <div
+                          key={dec.id}
+                          className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-800 truncate">{dec.title}</p>
+                            <p className="text-slate-500 truncate">By {dec.proposedBy}</p>
+                          </div>
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase shrink-0 ${
+                              dec.status === 'approved_by_elder'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : dec.status === 'declined_by_elder'
+                                  ? 'bg-rose-100 text-rose-800'
+                                  : 'bg-amber-100 text-amber-900'
+                            }`}
+                          >
+                            {dec.status.replace(/_/g, ' ')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
                 {/* Live Collaborative Care Activity Feed */}
                 <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs">
                   <h3 className="text-base font-extrabold text-slate-900 mb-3">
@@ -1355,7 +1594,10 @@ export default function App() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setApptModalOpen(true)}
+                        onClick={() => {
+                          setEditingAppt(null);
+                          setApptModalOpen(true);
+                        }}
                         className="px-3.5 py-2 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                       >
                         <Plus className="w-4 h-4" />
@@ -1428,6 +1670,17 @@ export default function App() {
                             >
                               <Mail className="w-3.5 h-3.5" />
                               Email Reminder
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingAppt(appt);
+                                setApptModalOpen(true);
+                              }}
+                              className="p-1.5 rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 cursor-pointer"
+                              title="Edit appointment"
+                            >
+                              <Edit3 className="w-4 h-4" />
                             </button>
                             <button
                               type="button"
@@ -1507,6 +1760,18 @@ export default function App() {
                           </p>
                           <p className="text-slate-500 mt-0.5">{r.notes}</p>
                         </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteRoutine(r.id);
+                          }}
+                          className="p-1 rounded-lg border border-rose-200 bg-white text-rose-600 hover:bg-rose-50 shrink-0 cursor-pointer"
+                          title="Delete routine"
+                          aria-label={`Delete routine ${r.title}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -1529,6 +1794,48 @@ export default function App() {
                     <p className="text-xs text-slate-600 mt-1">
                       Automatically sends proactive email alerts for missed medications, upcoming doses, and doctor appointments to {elderProfile.preferredName}, family members, and caretakers.
                     </p>
+                  </div>
+
+                  {/* Live 9:00 AM Auto-Escalation Watcher */}
+                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs">
+                      <span
+                        className={`w-2.5 h-2.5 rounded-full ${
+                          autoWatcherActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+                        }`}
+                      />
+                      <div>
+                        <p className="font-extrabold text-slate-900">
+                          Live 9:00 AM Auto-Escalation Watcher:{' '}
+                          <span className={autoWatcherActive ? 'text-emerald-700' : 'text-slate-500'}>
+                            {autoWatcherActive ? 'ACTIVE' : 'PAUSED'}
+                          </span>
+                        </p>
+                        <p className="text-[11px] text-slate-500">
+                          Last check: {lastWatcherCheck} • Alert target: 9553943884pavan@gmail.com
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setAutoWatcherActive((prev) => !prev)}
+                        className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-[11px] font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
+                      >
+                        {autoWatcherActive ? 'Pause' : 'Resume'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={emailSending}
+                        onClick={() => {
+                          setLastWatcherCheck(new Date().toLocaleTimeString());
+                          handleRunAutoScanReminders();
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-[11px] font-bold cursor-pointer"
+                      >
+                        Run Check Now
+                      </button>
+                    </div>
                   </div>
 
                   <div>
@@ -1862,6 +2169,87 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+
+                {/* Full-Width Multilingual AI Care Companion & Voice Reminder Broadcaster */}
+                <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <span className="text-xs font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
+                        Voice Reminders &amp; Caregiver Q&amp;A
+                      </span>
+                      <h3 className="text-lg font-extrabold text-slate-900 mt-1">
+                        Multilingual AI Care Companion &amp; Voice Reminder Broadcaster
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Ask contextual medication questions for {elderProfile.preferredName} or broadcast clear voice reminders aloud
+                      </p>
+                    </div>
+                    <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
+                      {['English', 'Hindi', 'Telugu'].map((lang) => (
+                        <button
+                          key={lang}
+                          type="button"
+                          onClick={() => setAiCompanionLang(lang)}
+                          className={`px-3 py-1 rounded-lg text-xs font-extrabold cursor-pointer ${
+                            aiCompanionLang === lang
+                              ? 'bg-indigo-700 text-white'
+                              : 'text-slate-700 hover:bg-white'
+                          }`}
+                        >
+                          {lang}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleAskAiHubCompanion} className="flex flex-col sm:flex-row gap-2.5">
+                    <input
+                      type="text"
+                      value={aiCompanionQuery}
+                      onChange={(e) => setAiCompanionQuery(e.target.value)}
+                      placeholder="Ask about next medicine, food precautions, dizziness, or doctor visit..."
+                      className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold"
+                    />
+                    <button
+                      type="submit"
+                      disabled={aiCompanionLoading || !aiCompanionQuery.trim()}
+                      className="px-5 py-2.5 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      {aiCompanionLoading ? 'Generating...' : 'Ask Gemini Companion'}
+                    </button>
+                  </form>
+
+                  {aiCompanionReply && (
+                    <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                      <div className="space-y-1">
+                        <p className="text-[11px] font-extrabold uppercase text-indigo-800">
+                          {aiCompanionReply.engine || 'KinCare AI Companion'} ({aiCompanionLang})
+                        </p>
+                        <p className="text-sm text-slate-900 font-semibold leading-relaxed">
+                          {aiCompanionReply.reply}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          speakText(
+                            aiCompanionReply.reply,
+                            aiCompanionLang === 'Hindi'
+                              ? 'hi-IN'
+                              : aiCompanionLang === 'Telugu'
+                                ? 'te-IN'
+                                : 'en-IN'
+                          )
+                        }
+                        className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 shrink-0 cursor-pointer"
+                      >
+                        <Volume2 className="w-4 h-4" />
+                        Broadcast Voice Reminder
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1902,8 +2290,12 @@ export default function App() {
 
       <AppointmentModal
         isOpen={apptModalOpen}
-        onClose={() => setApptModalOpen(false)}
+        onClose={() => {
+          setApptModalOpen(false);
+          setEditingAppt(null);
+        }}
         onSave={handleSaveAppointment}
+        initialData={editingAppt}
       />
 
       <EmergencyIdModal

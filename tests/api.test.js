@@ -177,4 +177,55 @@ describe('KinCare AI — Elderly Care & Medication Management Platform API', () 
     expect(loginRes.body.token).toBeTruthy();
     expect(loginRes.body.member.name).toBe('Pavan Kumar');
   });
+
+  it('supports editing appointments, proposing/resolving elder autonomy decisions, and deleting routines', async () => {
+    const createAppt = await request(app)
+      .post('/api/appointments')
+      .send({
+        doctorName: 'Dr. Kavita Iyer',
+        specialty: 'Endocrinology',
+        hospital: 'Fortis Care',
+        date: '2026-11-28',
+        time: '11:00',
+      });
+    expect(createAppt.status).toBe(201);
+    const apptId = createAppt.body.appointment.id;
+
+    const editAppt = await request(app)
+      .put(`/api/appointments/${apptId}`)
+      .send({
+        doctorName: 'Dr. Kavita Iyer',
+        time: '15:30',
+        hospital: 'Apollo Main',
+      });
+    expect(editAppt.status).toBe(200);
+    expect(editAppt.body.appointment.time).toBe('15:30');
+    expect(editAppt.body.appointment.hospital).toBe('Apollo Main');
+
+    const proposalRes = await request(app)
+      .post('/api/autonomy')
+      .send({
+        proposedBy: 'Priya Sharma (Family)',
+        title: 'Shift Evening Walk to 5:30 PM',
+        reason: 'Cooler evening weather for comfort.',
+      });
+    expect(proposalRes.status).toBe(201);
+    const decisionId = proposalRes.body.decision.id;
+
+    const resolveRes = await request(app)
+      .patch(`/api/autonomy/${decisionId}`)
+      .send({ status: 'approved_by_elder' });
+    expect(resolveRes.status).toBe(200);
+    expect(resolveRes.body.decision.status).toBe('approved_by_elder');
+
+    const routineRes = await request(app)
+      .post('/api/routines')
+      .send({ title: 'Evening Joint Mobility Stretch', time: '17:30' });
+    expect(routineRes.status).toBe(201);
+    const routineId = routineRes.body.routine.id;
+
+    const delRoutineRes = await request(app).delete(`/api/routines/${routineId}`);
+    expect(delRoutineRes.status).toBe(200);
+    expect(delRoutineRes.body.deleted).toBe(true);
+  });
 });

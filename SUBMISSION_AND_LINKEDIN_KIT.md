@@ -11,11 +11,11 @@ Use this ready-to-copy kit for your **Platform Submission (Requirement 4/4)**, *
 **KinCare AI** is a smart, interconnected elderly care and medication management platform built with **Google Gemini AI (`@google/genai`)**, **React**, and **Node.js/Express on Google Cloud Run**. It creates a shared, passcode-protected care ecosystem connecting elderly individuals, family members, and caretakers while keeping seniors at the centre of their own healthcare decisions.
 
 **Key Highlights:**
-1. **Secure Passcode-Based Care Circle:** Role-aware PBKDF2-hashed passcode access for the Elderly Individual (`123456`), Family Members (`654321`), and Caretakers (`112233`) with granular permissions and real-time activity auditing.
-2. **Dual-Interface Senior Accessibility (WCAG AAA):** Features a dedicated **Senior Comfort Mode** with visual pill guides (color/shape), Web Speech API voice readouts, microphone voice input, adjustable font scaling (`A/A+/A++`), and high-contrast view alongside a **Family & Caretaker Command Center**.
-3. **Elderly Autonomy & Decision Charter:** Goes beyond basic reminder apps by empowering seniors to approve or decline proposed schedule changes, log daily vitals & mood, and control privacy/escalation rules.
-4. **Proactive Multi-Tier Email Reminder Engine:** Automatically detects missed medications, upcoming doses, and doctor appointments, dispatching rich HTML email alerts to the Care Circle with a built-in Live Email Outbox Inspector.
-5. **Google Gemini 3.5 Flash Lite Clinical Intelligence:** Includes an **AI Prescription & Label Scanner**, **Drug-Drug & Food Interaction Guardian**, **Bilingual Voice Care Companion**, **Intelligent Caregiver Missed-Dose Alerts**, **Pre-Visit Doctor Clinical Brief Generator**, and a **One-Tap SOS & Printable QR Emergency Medical ID Card**.
+1. **Secure Passcode & Account Onboarding (`Login / Sign Up`):** Role-aware PBKDF2-hashed passcode access and custom account creation for the Elderly Individual (`123456`), Family Members (`654321`), and Caregivers (`112233`) with granular permissions and real-time activity auditing.
+2. **4-Screen GrandPad-Inspired Senior Accessibility (WCAG AAA):** Features a calm **Senior Comfort View** (*My Medicines* with spotlight dose + Undo, *My Day & Doctor* with 1-tap emoji mood check-in, *Voice Helper* with TTS/STT, and *Choices & SOS*) alongside a **Family & Caregiver Command Center**.
+3. **Elderly Autonomy & Decision Charter:** Family and caregivers can propose schedule changes from the Command Center while seniors approve or decline in 1 tap and control their privacy & escalation rules.
+4. **Proactive Multi-Tier Email Reminder Engine:** Includes a Live 9:00 AM Auto-Escalation Watcher and dispatches AI-enriched HTML email alerts via Resend/SMTP for missed doses, upcoming doses, and appointments with a built-in Live Email Outbox Inspector.
+5. **Google Gemini 3.5 Flash Lite Clinical Intelligence:** Includes an **AI Prescription & Label Scanner**, **Drug-Drug & Food Interaction Guardian**, **Multilingual AI Care Companion & Voice Reminder Broadcaster**, **Pre-Visit Doctor Clinical Brief Generator**, `.ics` calendar exports, and a **One-Tap SOS & Printable QR Emergency Medical ID Card**.
 
 ---
 
@@ -70,15 +70,16 @@ A huge thank you to @Makers Need More (MnM), Google for Developers, and Hack2Ski
 gcloud auth login
 gcloud config set project YOUR_GCP_PROJECT_ID
 
-# 2. Deploy directly from source (uses our production Dockerfile on Port 8080)
+# 2. Deploy directly from source (uses production Dockerfile on Port 8080)
 gcloud run deploy kincare-ai \
   --source . \
   --region asia-south1 \
   --platform managed \
   --allow-unauthenticated \
-  --port 8080
+  --port 8080 \
+  --set-env-vars "NODE_ENV=production,GEMINI_MODEL=gemini-3.5-flash-lite,ALERT_EMAIL_RECIPIENT=9553943884pavan@gmail.com,GEMINI_API_KEY=YOUR_GEMINI_KEY,RESEND_API_KEY=YOUR_RESEND_KEY,SESSION_SECRET=YOUR_SECRET"
 ```
 
 ### Option B: Vercel / Render / Railway
-- **Vercel:** Run `npx vercel --prod` (configured via `vercel.json` + `api/index.js`).
-- **Render / Railway:** Push your public GitHub repository and connect it to Render (`render.yaml` auto-detects build & start commands) or Railway.
+- **Vercel:** Run `npx vercel --prod` (configured via `vercel.json` + `api/index.js`) and configure `GEMINI_API_KEY`, `GEMINI_MODEL`, `RESEND_API_KEY`, `ALERT_EMAIL_RECIPIENT`, and `SESSION_SECRET` in Vercel Environment Variables.
+- **Render:** Push your public GitHub repository (`git push`) and connect it as a Blueprint (`render.yaml` auto-detects build & start commands on port `8080`). Add your API keys in Render → Environment.
