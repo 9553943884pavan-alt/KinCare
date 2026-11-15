@@ -57,7 +57,27 @@ Automatically monitors adherence and dispatches proactive HTML email reminders f
 
 A huge thank you to @Makers Need More (MnM), Google for Developers, and Hack2Skill for organizing an incredible build experience with Google Antigravity and Gemini AI! 🙌
 
-#PromptWars #Catalyst #BuildWithAI #MakersNeedMore #MnM #GoogleForDevelopers #GeminiAI #GoogleCloudRun #HealthTech #ElderlyCare #Accessibility #AIHackathon
+#PromptWars #Catalyst #BuildWReview the existing codebase and fix the following architectural issues to make the application production-ready:
+
+1. **Authentication & Security:** Remove plaintext `demoPasscodeHint` exposure from `/api/public-members`. Enforce authentication and authorization on protected `/api/*` routes, especially mutating operations. Require a secure `SESSION_SECRET` in production. Preserve demo functionality through an explicitly configured demo mode, disabled by default in production.
+
+2. **Persistent Database:** Replace the ephemeral `server/data/runtime-db.json` storage with the project's existing persistent database (prefer PostgreSQL if already configured). Ensure data survives Render/Cloud Run restarts, redeployments, and multiple instances. Implement safe migration and proper database error handling.
+
+3. **Bundle Optimization:** Reduce the Vite JavaScript bundle (~740 KB) using route-level lazy loading, code splitting, and dynamic imports. Eliminate unnecessary dependencies without breaking functionality.
+
+**Implementation Rules:**
+- First inspect the existing architecture, configurations, and deployment setup.
+- Fix root causes rather than applying temporary workarounds.
+- Preserve existing APIs, UI behavior, and essential demo workflows wherever security permits.
+- Never hardcode credentials or expose secrets.
+- Update environment examples and deployment documentation.
+- Add regression tests and run linting, type checks, tests, and production builds.
+- Verify authentication, database persistence, and optimized bundle output.
+- Do not introduce unnecessary architectural changes.
+
+**Final Report:** Provide issues fixed, files modified, test results, before/after bundle sizes, required environment variables, deployment steps, and any remaining limitations.
+
+**Goal:** Deliver a secure, persistent, optimized, deployment-ready application with no regressions. Implement the fixes directly, not just recommendations.ithAI #MakersNeedMore #MnM #GoogleForDevelopers #GeminiAI #GoogleCloudRun #HealthTech #ElderlyCare #Accessibility #AIHackathon
 ```
 
 ---

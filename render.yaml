@@ -11,3 +11,14 @@ services:
         value: production
       - key: PORT
         value: 8080
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ENFORCE_SESSION_SECRET
+        value: "true"
+      - key: DEMO_MODE
+        value: "false"
+      # Optional persistent storage (Render Managed Postgres or Starter+ Persistent Disk):
+      # - key: DATABASE_URL
+      #   sync: false
+      # - key: SQLITE_DB_PATH
+      #   value: /var/data/kincare.sqlite

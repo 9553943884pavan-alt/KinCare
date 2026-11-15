@@ -43,7 +43,7 @@ export function createInitialSeedData() {
         passcodePlainHint: '123456',
         passcodeHash: hashPasscode('123456', 'salt-elder-01'),
         avatarColor: 'bg-teal-600',
-        permissions: ['view', 'add', 'edit', 'delete', 'approve_autonomy', 'log_adherence'],
+        permissions: ['view', 'add', 'edit', 'delete', 'approve_autonomy', 'log_adherence', 'trigger_reminders'],
         notifyOnMissedMed: true,
         notifyOnUpcomingDose: true,
         notifyOnAppointment: true,

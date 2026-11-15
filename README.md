@@ -28,11 +28,11 @@ flowchart LR
         AIHub["Gemini AI Studio\n(Rx Scanner, Drug Interaction Guardian, Doctor Brief)"]
     end
 
-    subgraph Backend["Node.js + Express REST API (Cloud Run Port 8080)"]
-        Sec["Passcode Security Layer\n(PBKDF2 + HMAC Token + Helmet + Rate Limit)"]
+    subgraph Backend["Node.js + Express REST API (Cloud Run / Render Port 8080)"]
+        Sec["Passcode Security Layer\n(PBKDF2 + HMAC Token + Role RBAC + Helmet + Rate Limit)"]
         Email["Proactive Email Reminder Engine\n(Nodemailer SMTP / Resend / Ethereal Preview)"]
         Gemini["Google Gemini 3.5 Flash Lite Service\n(@google/genai SDK)"]
-        Store[("Persistent JSON / In-Memory Store\n+ Pre-Seeded Care Circle")]
+        Store[("Persistent Database\n(SQLite WAL / PostgreSQL JSONB)")]
     end
 
     Frontend <--> Sec
@@ -77,28 +77,33 @@ npm test
 
 ---
 
-## 🔑 Demo Passcodes & Custom Account Sign-Up
+## 🔑 Authentication, Passcode RBAC & Demo Mode
 
-Users can either create their own account from the **Welcome / Sign Up** screen or sign in with pre-seeded roles:
+- **Production Default (`NODE_ENV=production`):** Demo shortcuts (`DEMO_MODE`) are **disabled by default**. `/api/public-members` never exposes plaintext PIN hints (`demoPasscodeHint`), all mutating `/api/*` endpoints enforce Bearer session authentication (`requireAuth`), sensitive actions enforce role permissions (`elder` for Care Autonomy decisions, `elder`/`family` for Care Circle management & charter settings), and `ENFORCE_SESSION_SECRET=true` requires a strong 16+ char non-default `SESSION_SECRET`.
+- **Explicit Demo Mode (`DEMO_MODE=true`):** Enables 1-tap role login (`POST /api/auth/demo-login`) and demo reset on local development or demo instances without hardcoding credentials in public API responses or frontend bundles. In local `DEMO_MODE=true` seed profiles:
 
-| Care Circle Member | Role | Demo Passcode | Key Capabilities |
+| Care Circle Member | Role | Seeded Passcode (Dev/Demo Only) | Key Capabilities |
 | :--- | :--- | :--- | :--- |
-| **Ramesh Sharma (74 yrs)** | `elder` (Elderly Person) | **`123456`** | Opens **4-Screen Senior View** (*My Medicines*, *My Day & Doctor*, *Voice Helper*, *Choices & SOS*) |
-| **Priya Sharma** | `family` (Family Member) | **`654321`** | Full **Family Command Center**, medication/appointment/routine CRUD, vitals, consent proposals, proactive emails |
+| **Ramesh Sharma (74 yrs)** | `elder` (Elderly Person) | **`123456`** | Opens **4-Screen Senior View** & exclusively approves/declines Care Autonomy decisions |
+| **Priya Sharma** | `family` (Family Member) | **`654321`** | Full **Family Command Center**, schedule CRUD, Care Circle management, proactive emails |
 | **Nurse Anita Rao** | `caretaker` (Caregiver) | **`112233`** | Clinical schedule management, vitals logging, AI Drug Interaction, Prescription Scanner & Doctor Brief |
 
 ---
 
 ## ☁️ Production Deployment Guidelines (Google Cloud Run, Render, Vercel)
 
-> Never commit your local `.env` file (`GEMINI_API_KEY`, `RESEND_API_KEY`) to GitHub—`.gitignore` excludes it automatically. Instead, set environment variables directly in your hosting provider:
+> Never commit your local `.env` file (`SESSION_SECRET`, `GEMINI_API_KEY`, `RESEND_API_KEY`, `DATABASE_URL`) to GitHub—`.gitignore` excludes it automatically. Set these environment variables in your hosting provider:
+> - `NODE_ENV=production`
+> - `SESSION_SECRET` (cryptographically random 32+ hex string; auto-generated via `render.yaml`)
+> - `ENFORCE_SESSION_SECRET=true`
+> - `DEMO_MODE=false` (set `true` only on dedicated evaluation demos)
+> - `SQLITE_DB_PATH=/var/data/kincare.sqlite` (when using a single-instance mounted disk) OR `DATABASE_URL=postgres://...` (with `npm install pg` for managed PostgreSQL across restarts & multiple instances)
 > - `GEMINI_API_KEY` (from Google AI Studio)
 > - `GEMINI_MODEL=gemini-3.5-flash-lite`
 > - `RESEND_API_KEY` (from Resend)
 > - `ALERT_EMAIL_RECIPIENT=9553943884pavan@gmail.com`
-> - `SESSION_SECRET` (random long string)
 
-### Option A: Google Cloud Run (Recommended for Top 10 Qualification)
+### Option A: Google Cloud Run (Recommended for Multi-Instance Production)
 ```bash
 gcloud auth login
 gcloud config set project YOUR_GCP_PROJECT_ID
@@ -108,14 +113,14 @@ gcloud run deploy kincare-ai-platform \
   --region asia-south1 \
   --allow-unauthenticated \
   --port 8080 \
-  --set-env-vars "NODE_ENV=production,GEMINI_MODEL=gemini-3.5-flash-lite,ALERT_EMAIL_RECIPIENT=9553943884pavan@gmail.com,GEMINI_API_KEY=YOUR_KEY,RESEND_API_KEY=YOUR_RESEND_KEY,SESSION_SECRET=YOUR_SECRET"
+  --set-env-vars "NODE_ENV=production,ENFORCE_SESSION_SECRET=true,DEMO_MODE=false,GEMINI_MODEL=gemini-3.5-flash-lite,ALERT_EMAIL_RECIPIENT=9553943884pavan@gmail.com,GEMINI_API_KEY=YOUR_KEY,RESEND_API_KEY=YOUR_RESEND_KEY,SESSION_SECRET=YOUR_SECRET,DATABASE_URL=YOUR_POSTGRES_URL"
 ```
 
-### Option B: Render (One-Click via `render.yaml`)
-1. Push your code to a public GitHub repository.
-2. In Render Dashboard → **New + → Blueprint** (or Web Service) and connect your repo.
-3. Render reads `render.yaml` (`npm install --include=dev && npm run build` and `npm start` on Port `8080`, health check `/api/health`).
-4. Add `GEMINI_API_KEY`, `GEMINI_MODEL=gemini-3.5-flash-lite`, `RESEND_API_KEY`, `ALERT_EMAIL_RECIPIENT`, and `SESSION_SECRET` under **Environment**.
+### Option B: Render (One-Click via `render.yaml` or Manual Web Service)
+1. Push your code to GitHub (`main` branch).
+2. In Render Dashboard → **New + → Blueprint** (reads `render.yaml`: `npm install --include=dev && npm run build`, `npm start`, health check `/api/health`, auto-generated `SESSION_SECRET`, `ENFORCE_SESSION_SECRET=true`, `DEMO_MODE=false`).
+3. For persistent storage that survives redeploys: attach a Render PostgreSQL database as `DATABASE_URL` (install `pg` in `package.json`: `npm install pg`) for multi-instance persistence, OR attach a Render Persistent Disk and set `SQLITE_DB_PATH=/var/data/kincare.sqlite`.
+4. Add `GEMINI_API_KEY`, `GEMINI_MODEL=gemini-3.5-flash-lite`, `RESEND_API_KEY`, and `ALERT_EMAIL_RECIPIENT` under **Environment**.
 
 ### Option C: Vercel (`vercel.json` + `api/index.js`)
 ```bash

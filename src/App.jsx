@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import {
   HeartPulse,
   ShieldCheck,
@@ -38,18 +38,29 @@ import {
   downloadAppointmentICS,
   exportAdherenceReportCSV,
 } from './utils/api.js';
-import PasscodeModal from './components/PasscodeModal.jsx';
-import SeniorComfortView from './components/SeniorComfortView.jsx';
-import AuthOnboardingScreen from './components/AuthOnboardingScreen.jsx';
-import {
-  MedicationModal,
-  AppointmentModal,
-  EmergencyIdModal,
-  ElderProfileModal,
-} from './components/Modals.jsx';
+const PasscodeModal = lazy(() => import('./components/PasscodeModal.jsx'));
+const SeniorComfortView = lazy(() => import('./components/SeniorComfortView.jsx'));
+const AuthOnboardingScreen = lazy(() => import('./components/AuthOnboardingScreen.jsx'));
+const MedicationModal = lazy(() =>
+  import('./components/Modals.jsx').then((m) => ({ default: m.MedicationModal }))
+);
+const AppointmentModal = lazy(() =>
+  import('./components/Modals.jsx').then((m) => ({ default: m.AppointmentModal }))
+);
+const EmergencyIdModal = lazy(() =>
+  import('./components/Modals.jsx').then((m) => ({ default: m.EmergencyIdModal }))
+);
+const ElderProfileModal = lazy(() =>
+  import('./components/Modals.jsx').then((m) => ({ default: m.ElderProfileModal }))
+);
 
 export default function App() {
   const [dashboard, setDashboard] = useState(null);
+  const [publicCircle, setPublicCircle] = useState({
+    elderName: 'Ramesh Sharma',
+    demoMode: false,
+    members: [],
+  });
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeMember, setActiveMember] = useState(null);
@@ -130,12 +141,21 @@ export default function App() {
           return true;
         });
       } else {
-        setActiveMember((prev) => {
-          if (prev && data.careCircleMembers?.some((m) => m.id === prev.id)) {
-            return data.careCircleMembers.find((m) => m.id === prev.id);
-          }
-          return data.careCircleMembers?.[0] || null;
-        });
+        if (getStoredToken()) {
+          setStoredToken('');
+        }
+        setIsAuthenticated(false);
+        setActiveMember(null);
+        try {
+          const pub = await apiFetch('/api/public-members');
+          setPublicCircle({
+            elderName: pub.elderName || 'Ramesh Sharma',
+            demoMode: Boolean(pub.demoMode ?? data.demoMode),
+            members: pub.members || [],
+          });
+        } catch {
+          // Keep existing public circle fallback if unreachable
+        }
       }
       setSelectedEmailLog((prev) => {
         if (!data.emailLogs?.length) return null;
@@ -187,6 +207,23 @@ export default function App() {
     await fetchDashboardData();
   };
 
+  const handleDemoLogin = async (memberId, role) => {
+    const res = await apiFetch('/api/auth/demo-login', {
+      method: 'POST',
+      body: JSON.stringify({ memberId, role }),
+    });
+    setStoredToken(res.token);
+    setActiveMember(res.member);
+    setIsAuthenticated(true);
+    if (res.member.role === 'elder') {
+      setViewMode('comfort');
+    } else {
+      setViewMode('command');
+    }
+    showToast(`Signed in (Demo) as ${res.member.name} (${res.member.roleLabel})`);
+    await fetchDashboardData();
+  };
+
   const handleSignup = async (signupForm) => {
     const res = await apiFetch('/api/auth/signup', {
       method: 'POST',
@@ -204,10 +241,12 @@ export default function App() {
     await fetchDashboardData();
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     setStoredToken('');
     setIsAuthenticated(false);
+    setActiveMember(null);
     showToast('Signed out — choose your role or sign in anytime');
+    await fetchDashboardData();
   };
 
   const handleAddCareMember = async (memberData) => {
@@ -622,18 +661,12 @@ export default function App() {
 
   const handleQuickRoleSwitch = async (targetRole) => {
     const member = careCircleMembers.find((m) => m.role === targetRole);
-    if (!member) {
+    if (!member || !dashboard?.demoMode) {
       setPasscodeModalOpen(true);
       return;
     }
-    const defaultPinMap = {
-      elder: '123456',
-      family: '654321',
-      caretaker: '112233',
-    };
-    const pin = member.passcodePlainHint || defaultPinMap[targetRole];
     try {
-      await handleVerifyPasscode(pin, member.id);
+      await handleDemoLogin(member.id, targetRole);
     } catch {
       setPasscodeModalOpen(true);
     }
@@ -799,14 +832,24 @@ export default function App() {
             <span>{toastBanner.title}</span>
           </div>
         )}
-        <AuthOnboardingScreen
-          elderName={elderProfile?.name || 'Ramesh Sharma'}
-          members={careCircleMembers}
-          onVerifyPasscode={handleVerifyPasscode}
-          onSignup={handleSignup}
-          fontScale={fontScale}
-          setFontScale={setFontScale}
-        />
+        <Suspense
+          fallback={
+            <div className="min-h-screen flex items-center justify-center bg-[#FAF8F5] text-slate-700 font-bold">
+              Loading KinCare Sign-In...
+            </div>
+          }
+        >
+          <AuthOnboardingScreen
+            elderName={publicCircle.elderName || 'Ramesh Sharma'}
+            members={publicCircle.members}
+            demoMode={Boolean(dashboard?.demoMode ?? publicCircle.demoMode)}
+            onVerifyPasscode={handleVerifyPasscode}
+            onDemoLogin={handleDemoLogin}
+            onSignup={handleSignup}
+            fontScale={fontScale}
+            setFontScale={setFontScale}
+          />
+        </Suspense>
       </div>
     );
   }
@@ -898,15 +941,17 @@ export default function App() {
               Emergency ID
             </button>
 
-            <button
-              type="button"
-              onClick={handleResetDemo}
-              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] flex items-center gap-1 cursor-pointer"
-              title="Reset demo state"
-            >
-              <RefreshCw className="w-3 h-3" />
-              Reset Demo
-            </button>
+            {dashboard?.demoMode && (
+              <button
+                type="button"
+                onClick={handleResetDemo}
+                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] flex items-center gap-1 cursor-pointer"
+                title="Reset demo state"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Reset Demo
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1056,23 +1101,31 @@ export default function App() {
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
         {viewMode === 'comfort' ? (
-          <SeniorComfortView
-            elderProfile={elderProfile}
-            medications={medications}
-            routines={routines}
-            appointments={appointments}
-            autonomyDecisions={autonomyDecisions}
-            onUpdateMedicationStatus={handleUpdateMedicationStatus}
-            onToggleRoutine={handleToggleRoutine}
-            onResolveAutonomy={handleResolveAutonomy}
-            onUpdateAutonomyPrefs={handleUpdateAutonomyPrefs}
-            onAskCompanion={handleAskCompanion}
-            onTriggerSOS={handleTriggerSOS}
-            onOpenEmergencyCard={() => setEmergencyModalOpen(true)}
-            onLogVitals={handleLogVitals}
-            onSnoozeMedication={handleSnoozeMedication}
-            onSaveAppointmentQuestion={handleSaveAppointmentQuestion}
-          />
+          <Suspense
+            fallback={
+              <div className="p-8 text-center text-slate-700 font-bold">
+                Loading Senior Comfort View...
+              </div>
+            }
+          >
+            <SeniorComfortView
+              elderProfile={elderProfile}
+              medications={medications}
+              routines={routines}
+              appointments={appointments}
+              autonomyDecisions={autonomyDecisions}
+              onUpdateMedicationStatus={handleUpdateMedicationStatus}
+              onToggleRoutine={handleToggleRoutine}
+              onResolveAutonomy={handleResolveAutonomy}
+              onUpdateAutonomyPrefs={handleUpdateAutonomyPrefs}
+              onAskCompanion={handleAskCompanion}
+              onTriggerSOS={handleTriggerSOS}
+              onOpenEmergencyCard={() => setEmergencyModalOpen(true)}
+              onLogVitals={handleLogVitals}
+              onSnoozeMedication={handleSnoozeMedication}
+              onSaveAppointmentQuestion={handleSaveAppointmentQuestion}
+            />
+          </Suspense>
         ) : (
           <div className="space-y-6">
             {/* Proactive Missed Medication Alert Banner (Always visible if a dose is missed!) */}
@@ -1449,7 +1502,7 @@ export default function App() {
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <span className="font-mono text-[11px] font-bold text-slate-600 bg-white px-2 py-1 rounded-lg border border-slate-200">
-                                  PIN: {m.passcodePlainHint || '••••••'}
+                                  {m.passcodePlainHint ? `PIN: ${m.passcodePlainHint}` : 'Passcode Protected'}
                                 </span>
                                 {m.role !== 'elder' && (
                                   <button
@@ -2581,50 +2634,64 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Modals */}
-      <PasscodeModal
-        isOpen={passcodeModalOpen}
-        onClose={() => setPasscodeModalOpen(false)}
-        members={careCircleMembers}
-        currentMember={activeMember}
-        onVerifyPasscode={handleVerifyPasscode}
-        onAddMember={handleAddCareMember}
-      />
+      {/* Lazy-Loaded Modals */}
+      <Suspense fallback={null}>
+        {passcodeModalOpen && (
+          <PasscodeModal
+            isOpen={passcodeModalOpen}
+            onClose={() => setPasscodeModalOpen(false)}
+            members={careCircleMembers}
+            currentMember={activeMember}
+            demoMode={Boolean(dashboard?.demoMode)}
+            onVerifyPasscode={handleVerifyPasscode}
+            onDemoLogin={handleDemoLogin}
+            onAddMember={handleAddCareMember}
+          />
+        )}
 
-      <MedicationModal
-        isOpen={medModalOpen}
-        onClose={() => {
-          setMedModalOpen(false);
-          setEditingMed(null);
-        }}
-        onSave={handleSaveMedication}
-        initialData={editingMed}
-      />
+        {medModalOpen && (
+          <MedicationModal
+            isOpen={medModalOpen}
+            onClose={() => {
+              setMedModalOpen(false);
+              setEditingMed(null);
+            }}
+            onSave={handleSaveMedication}
+            initialData={editingMed}
+          />
+        )}
 
-      <AppointmentModal
-        isOpen={apptModalOpen}
-        onClose={() => {
-          setApptModalOpen(false);
-          setEditingAppt(null);
-        }}
-        onSave={handleSaveAppointment}
-        initialData={editingAppt}
-      />
+        {apptModalOpen && (
+          <AppointmentModal
+            isOpen={apptModalOpen}
+            onClose={() => {
+              setApptModalOpen(false);
+              setEditingAppt(null);
+            }}
+            onSave={handleSaveAppointment}
+            initialData={editingAppt}
+          />
+        )}
 
-      <EmergencyIdModal
-        isOpen={emergencyModalOpen}
-        onClose={() => setEmergencyModalOpen(false)}
-        elderProfile={elderProfile}
-        medications={medications}
-        careCircleMembers={careCircleMembers}
-      />
+        {emergencyModalOpen && (
+          <EmergencyIdModal
+            isOpen={emergencyModalOpen}
+            onClose={() => setEmergencyModalOpen(false)}
+            elderProfile={elderProfile}
+            medications={medications}
+            careCircleMembers={careCircleMembers}
+          />
+        )}
 
-      <ElderProfileModal
-        isOpen={elderProfileModalOpen}
-        onClose={() => setElderProfileModalOpen(false)}
-        onSave={handleSaveElderProfile}
-        elderProfile={elderProfile}
-      />
+        {elderProfileModalOpen && (
+          <ElderProfileModal
+            isOpen={elderProfileModalOpen}
+            onClose={() => setElderProfileModalOpen(false)}
+            onSave={handleSaveElderProfile}
+            elderProfile={elderProfile}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

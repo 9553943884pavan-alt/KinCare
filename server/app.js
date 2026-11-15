@@ -8,8 +8,14 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-import { getStore, persistState, resetStoreToSeed, addActivity } from './data/store.js';
-import { verifyPasscode, hashPasscode, signSessionToken, verifySessionToken } from './security/passcodeAuth.js';
+import { getStore, persistState, resetStoreToSeed, addActivity, getDatabaseStatus } from './data/store.js';
+import {
+  verifyPasscode,
+  hashPasscode,
+  signSessionToken,
+  verifySessionToken,
+  isDemoModeEnabled,
+} from './security/passcodeAuth.js';
 import { dispatchProactiveEmail } from './services/emailService.js';
 import {
   analyzeMedicationInteractions,
@@ -21,6 +27,53 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.resolve(__dirname, '../dist');
+
+function sanitizeMemberPayload(member, { includeDemoHint = false } = {}) {
+  if (!member) return null;
+  const { passcodeHash: _hash, passcodePlainHint, ...rest } = member;
+  if (includeDemoHint && isDemoModeEnabled() && passcodePlainHint) {
+    return { ...rest, passcodePlainHint };
+  }
+  return rest;
+}
+
+function requireAuth(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({
+      error: 'Authentication required. Please sign in with your Care Circle passcode.',
+    });
+  }
+  const store = getStore();
+  const activeMember = store.careCircleMembers.find((m) => m.id === req.user.id);
+  if (!activeMember) {
+    return res.status(401).json({
+      error: 'Session is no longer valid. Please sign in again.',
+    });
+  }
+  req.user = {
+    ...req.user,
+    name: activeMember.name,
+    role: activeMember.role,
+    permissions: activeMember.permissions,
+  };
+  return next();
+}
+
+function requireRoles(...allowedRoles) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        error: 'Authentication required. Please sign in with your Care Circle passcode.',
+      });
+    }
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({
+        error: `Forbidden: requires role (${allowedRoles.join(' or ')}). Signed in as ${req.user.role}.`,
+      });
+    }
+    return next();
+  };
+}
 
 export function createApp() {
   const app = express();
@@ -73,10 +126,19 @@ export function createApp() {
   app.get('/api/health', (_req, res) => {
     const store = getStore();
     const sanitize = (v) => String(v || '').trim().replace(/^["']|["']$/g, '').trim();
+    const dbStatus = getDatabaseStatus();
+    const demoMode = isDemoModeEnabled();
     res.status(200).json({
       status: 'healthy',
       service: 'kincare-ai-elderly-care-platform',
       timestamp: new Date().toISOString(),
+      database: dbStatus,
+      security: {
+        demoMode,
+        authEnforced: true,
+        sessionSecretConfigured: Boolean(sanitize(process.env.SESSION_SECRET)),
+        enforceSessionSecret: process.env.ENFORCE_SESSION_SECRET === 'true',
+      },
       googleServices: {
         geminiSdk: '@google/genai',
         model: sanitize(process.env.GEMINI_MODEL) || 'gemini-3.5-flash-lite',
@@ -94,7 +156,7 @@ export function createApp() {
     });
   });
 
-  // 2. Public Care Circle Roster (for Passcode Gate Switcher)
+  // 2. Public Care Circle Roster (never exposes plaintext passcodes or hints)
   app.get('/api/public-members', (_req, res) => {
     const store = getStore();
     const members = store.careCircleMembers.map((m) => ({
@@ -105,11 +167,11 @@ export function createApp() {
       relationship: m.relationship,
       email: m.email,
       avatarColor: m.avatarColor,
-      demoPasscodeHint: m.passcodePlainHint,
     }));
     res.json({
       elderName: store.elderProfile.name,
       elderPreferredName: store.elderProfile.preferredName,
+      demoMode: isDemoModeEnabled(),
       members,
     });
   });
@@ -124,12 +186,13 @@ export function createApp() {
   app.post('/api/auth/verify-passcode', authLimiter, (req, res) => {
     const parsed = PasscodeSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: 'Please enter a valid 4 to 6 digit passcode.' });
+      return res.status(400).json({ error: 'Please enter a valid 4 to 8 digit passcode.' });
     }
 
     const { passcode, memberId, email } = parsed.data;
     const cleanEmail = String(email || '').trim().toLowerCase();
     const store = getStore();
+    const demoMode = isDemoModeEnabled();
 
     let matchedMember = null;
     if (memberId) {
@@ -145,14 +208,16 @@ export function createApp() {
       matchedMember = store.careCircleMembers.find((m) => verifyPasscode(passcode, m.passcodeHash));
     }
 
-    // Universal emergency/judge shared code '000000' logs in as Primary Care Coordinator
-    if (!matchedMember && passcode === '000000') {
+    // Universal demo code '000000' only works when demo mode is explicitly enabled (disabled by default in production)
+    if (!matchedMember && demoMode && passcode === '000000') {
       matchedMember = store.careCircleMembers[0];
     }
 
     if (!matchedMember) {
       return res.status(401).json({
-        error: 'Invalid email or passcode. Try demo passcodes: 123456 (Elderly Person), 654321 (Family Member), or 112233 (Caregiver).',
+        error: demoMode
+          ? 'Invalid email or passcode. Try demo passcodes: 123456 (Elderly Person), 654321 (Family Member), or 112233 (Caregiver).'
+          : 'Invalid email or passcode.',
       });
     }
 
@@ -164,21 +229,54 @@ export function createApp() {
     });
 
     addActivity(matchedMember.name, matchedMember.role, `Signed in via secure passcode (${matchedMember.roleLabel}).`);
+    persistState();
 
     return res.json({
       authenticated: true,
+      demoMode,
       token,
-      member: {
-        id: matchedMember.id,
-        name: matchedMember.name,
-        role: matchedMember.role,
-        roleLabel: matchedMember.roleLabel,
-        relationship: matchedMember.relationship,
-        email: matchedMember.email,
-        phone: matchedMember.phone,
-        avatarColor: matchedMember.avatarColor,
-        permissions: matchedMember.permissions,
-      },
+      member: sanitizeMemberPayload(matchedMember),
+    });
+  });
+
+  // Explicit Demo 1-Tap Sign-In (only allowed when DEMO_MODE is enabled; disabled by default in production)
+  app.post('/api/auth/demo-login', authLimiter, (req, res) => {
+    if (!isDemoModeEnabled()) {
+      return res.status(403).json({
+        error: 'Demo quick sign-in is disabled in production. Please sign in with your email and passcode.',
+      });
+    }
+
+    const { memberId, role } = req.body || {};
+    const store = getStore();
+    let matchedMember = null;
+
+    if (memberId) {
+      matchedMember = store.careCircleMembers.find((m) => m.id === memberId);
+    } else if (role) {
+      const normalizedRole = role === 'caregiver' ? 'caretaker' : role;
+      matchedMember = store.careCircleMembers.find((m) => m.role === normalizedRole);
+    }
+
+    if (!matchedMember) {
+      return res.status(404).json({ error: 'Demo member not found.' });
+    }
+
+    const token = signSessionToken({
+      id: matchedMember.id,
+      name: matchedMember.name,
+      role: matchedMember.role,
+      permissions: matchedMember.permissions,
+    });
+
+    addActivity(matchedMember.name, matchedMember.role, `Signed in via Demo Mode (${matchedMember.roleLabel}).`);
+    persistState();
+
+    return res.json({
+      authenticated: true,
+      demoMode: true,
+      token,
+      member: sanitizeMemberPayload(matchedMember),
     });
   });
 
@@ -259,7 +357,6 @@ export function createApp() {
       relationship: normalizedRole === 'elder' ? 'Self' : data.relationship || 'Care Circle',
       email: data.email.trim(),
       phone: data.phone || '+91 98450 00000',
-      passcodePlainHint: data.passcode,
       passcodeHash: hashPasscode(data.passcode),
       avatarColor: avatarColorMap[normalizedRole],
       permissions: permissionsMap[normalizedRole],
@@ -288,11 +385,11 @@ export function createApp() {
     );
     persistState();
 
-    const { passcodeHash: _removed, ...safeMember } = newMember;
     return res.status(201).json({
       authenticated: true,
+      demoMode: isDemoModeEnabled(),
       token,
-      member: safeMember,
+      member: sanitizeMemberPayload(newMember),
       elderProfile: store.elderProfile,
     });
   });
@@ -307,7 +404,7 @@ export function createApp() {
     passcode: z.string().min(4).max(8),
   });
 
-  app.post('/api/care-circle/members', (req, res) => {
+  app.post('/api/care-circle/members', requireAuth, requireRoles('elder', 'family'), (req, res) => {
     const parsed = NewMemberSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid Care Circle member details', details: parsed.error.flatten() });
@@ -328,7 +425,6 @@ export function createApp() {
       relationship: data.relationship,
       email: data.email,
       phone: data.phone || '+91 98000 00000',
-      passcodePlainHint: data.passcode,
       passcodeHash: hashPasscode(data.passcode),
       avatarColor: normalizedRole === 'family' ? 'bg-indigo-600' : 'bg-amber-600',
       permissions: ['view', 'add', 'edit', 'log_adherence', 'trigger_reminders'],
@@ -339,14 +435,19 @@ export function createApp() {
     store.careCircleMembers.push(newMember);
     addActivity(data.name, normalizedRole, `Joined Care Circle as ${newMember.roleLabel}.`);
     persistState();
-    res.status(201).json({ member: { ...newMember, passcodeHash: undefined } });
+    res.status(201).json({ member: sanitizeMemberPayload(newMember) });
   });
 
-  app.patch('/api/care-circle/members/:id', (req, res) => {
+  app.patch('/api/care-circle/members/:id', requireAuth, (req, res) => {
     const store = getStore();
     const member = store.careCircleMembers.find((m) => m.id === req.params.id);
     if (!member) {
       return res.status(404).json({ error: 'Care circle member not found' });
+    }
+    if (req.user.id !== member.id && !['elder', 'family'].includes(req.user.role)) {
+      return res.status(403).json({
+        error: 'Forbidden: only the member, elder, or family coordinator can edit preferences.',
+      });
     }
     const allowedFields = [
       'notifyOnMissedMed',
@@ -363,11 +464,10 @@ export function createApp() {
     }
     addActivity(member.name, member.role, `Updated alert & contact preferences for ${member.name}.`);
     persistState();
-    const { passcodeHash: _removed, ...safeMember } = member;
-    res.json({ member: safeMember });
+    res.json({ member: sanitizeMemberPayload(member) });
   });
 
-  app.delete('/api/care-circle/members/:id', (req, res) => {
+  app.delete('/api/care-circle/members/:id', requireAuth, requireRoles('elder', 'family'), (req, res) => {
     const store = getStore();
     const idx = store.careCircleMembers.findIndex((m) => m.id === req.params.id);
     if (idx === -1) {
@@ -377,7 +477,7 @@ export function createApp() {
       return res.status(400).json({ error: 'Primary elderly care profile cannot be deleted.' });
     }
     const [removed] = store.careCircleMembers.splice(idx, 1);
-    addActivity('Care Circle', 'family', `Removed ${removed.name} from Care Circle access.`);
+    addActivity(req.user.name, req.user.role, `Removed ${removed.name} from Care Circle access.`);
     persistState();
     res.json({ deleted: true, id: removed.id });
   });
@@ -385,10 +485,37 @@ export function createApp() {
   // 4. Unified Dashboard Data
   app.get('/api/dashboard', (req, res) => {
     const store = getStore();
-    const sanitizedMembers = store.careCircleMembers.map(({ passcodeHash, ...rest }) => rest);
+    const demoMode = isDemoModeEnabled();
+    const sanitizedMembers = store.careCircleMembers.map((m) => sanitizeMemberPayload(m));
     const authenticatedMember = req.user
       ? sanitizedMembers.find((m) => m.id === req.user.id) || null
       : null;
+
+    if (!authenticatedMember) {
+      return res.json({
+        authenticatedMember: null,
+        authRequired: true,
+        demoMode,
+        elderProfile: null,
+        careCircleMembers: [],
+        medications: [],
+        routines: [],
+        appointments: [],
+        adherenceHistory: [],
+        vitalsLog: [],
+        autonomyDecisions: [],
+        emailLogs: [],
+        activityFeed: [],
+        summaryMetrics: {
+          totalMeds: 0,
+          takenMeds: 0,
+          missedMeds: 0,
+          upcomingMeds: 0,
+          adherenceRate: 0,
+          lowStockCount: 0,
+        },
+      });
+    }
 
     const totalMeds = store.medications.length;
     const takenMeds = store.medications.filter((m) => m.status === 'taken').length;
@@ -398,6 +525,7 @@ export function createApp() {
 
     res.json({
       authenticatedMember,
+      demoMode,
       elderProfile: store.elderProfile,
       careCircleMembers: sanitizedMembers,
       medications: store.medications,
@@ -439,7 +567,7 @@ export function createApp() {
     actorRole: z.string().optional(),
   });
 
-  app.post('/api/medications', (req, res) => {
+  app.post('/api/medications', requireAuth, (req, res) => {
     const parsed = MedicationSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid medication data', details: parsed.error.flatten() });
@@ -479,7 +607,7 @@ export function createApp() {
     res.status(201).json({ medication: newMed });
   });
 
-  app.put('/api/medications/:id', async (req, res) => {
+  app.put('/api/medications/:id', requireAuth, async (req, res) => {
     const store = getStore();
     const idx = store.medications.findIndex((m) => m.id === req.params.id);
     if (idx === -1) {
@@ -553,7 +681,7 @@ export function createApp() {
     res.json({ medication: updated, autoEmailDispatched });
   });
 
-  app.delete('/api/medications/:id', (req, res) => {
+  app.delete('/api/medications/:id', requireAuth, (req, res) => {
     const store = getStore();
     const idx = store.medications.findIndex((m) => m.id === req.params.id);
     if (idx === -1) {
@@ -568,7 +696,7 @@ export function createApp() {
   });
 
   // 6. Daily Healthcare Routines CRUD
-  app.post('/api/routines', (req, res) => {
+  app.post('/api/routines', requireAuth, (req, res) => {
     const { title, time = '09:00', category = 'Wellness', notes = '', actorName } = req.body;
     if (!title || !String(title).trim()) {
       return res.status(400).json({ error: 'Routine title is required' });
@@ -590,7 +718,7 @@ export function createApp() {
     res.status(201).json({ routine });
   });
 
-  app.patch('/api/routines/:id', (req, res) => {
+  app.patch('/api/routines/:id', requireAuth, (req, res) => {
     const store = getStore();
     const routine = store.routines.find((r) => r.id === req.params.id);
     if (!routine) {
@@ -613,7 +741,7 @@ export function createApp() {
     res.json({ routine });
   });
 
-  app.delete('/api/routines/:id', (req, res) => {
+  app.delete('/api/routines/:id', requireAuth, (req, res) => {
     const store = getStore();
     const idx = store.routines.findIndex((r) => r.id === req.params.id);
     if (idx === -1) return res.status(404).json({ error: 'Routine not found' });
@@ -623,7 +751,7 @@ export function createApp() {
   });
 
   // 7. Medical Appointments CRUD
-  app.post('/api/appointments', (req, res) => {
+  app.post('/api/appointments', requireAuth, (req, res) => {
     const {
       doctorName,
       specialty = 'General Medicine',
@@ -664,7 +792,7 @@ export function createApp() {
     res.status(201).json({ appointment });
   });
 
-  app.put('/api/appointments/:id', (req, res) => {
+  app.put('/api/appointments/:id', requireAuth, (req, res) => {
     const store = getStore();
     const idx = store.appointments.findIndex((a) => a.id === req.params.id);
     if (idx === -1) return res.status(404).json({ error: 'Appointment not found' });
@@ -686,7 +814,7 @@ export function createApp() {
     res.json({ appointment: updatedAppt });
   });
 
-  app.delete('/api/appointments/:id', (req, res) => {
+  app.delete('/api/appointments/:id', requireAuth, (req, res) => {
     const store = getStore();
     const idx = store.appointments.findIndex((a) => a.id === req.params.id);
     if (idx === -1) return res.status(404).json({ error: 'Appointment not found' });
@@ -697,7 +825,7 @@ export function createApp() {
   });
 
   // 8. Vitals & Elder Mood Log
-  app.post('/api/vitals', (req, res) => {
+  app.post('/api/vitals', requireAuth, (req, res) => {
     const {
       systolic = 125,
       diastolic = 80,
@@ -739,7 +867,7 @@ export function createApp() {
   });
 
   // 9. Elder Autonomy & Decision-Making Endpoints (Keeping Elderly at the Centre)
-  app.post('/api/autonomy', (req, res) => {
+  app.post('/api/autonomy', requireAuth, (req, res) => {
     const { proposedBy = 'Family Member', title, reason = '' } = req.body;
     if (!title) return res.status(400).json({ error: 'Decision title is required' });
     const store = getStore();
@@ -758,7 +886,7 @@ export function createApp() {
     res.status(201).json({ decision });
   });
 
-  app.patch('/api/autonomy/:id', (req, res) => {
+  app.patch('/api/autonomy/:id', requireAuth, requireRoles('elder'), (req, res) => {
     const store = getStore();
     const item = store.autonomyDecisions.find((d) => d.id === req.params.id);
     if (!item) return res.status(404).json({ error: 'Autonomy proposal not found' });
@@ -784,7 +912,7 @@ export function createApp() {
     res.json({ decision: item });
   });
 
-  app.put('/api/elder-profile', (req, res) => {
+  app.put('/api/elder-profile', requireAuth, requireRoles('elder', 'family'), (req, res) => {
     const store = getStore();
     const {
       name,
@@ -845,7 +973,7 @@ export function createApp() {
     res.json({ elderProfile: store.elderProfile });
   });
 
-  app.put('/api/elder-profile/autonomy', (req, res) => {
+  app.put('/api/elder-profile/autonomy', requireAuth, requireRoles('elder', 'family'), (req, res) => {
     const store = getStore();
     store.elderProfile.autonomyPreferences = {
       ...store.elderProfile.autonomyPreferences,
@@ -860,7 +988,7 @@ export function createApp() {
   });
 
   // 10. Proactive Email Reminder Endpoints
-  app.post('/api/reminders/send', async (req, res) => {
+  app.post('/api/reminders/send', requireAuth, async (req, res) => {
     const store = getStore();
     const {
       type = 'MISSED_MEDICATION',
@@ -896,7 +1024,7 @@ export function createApp() {
     res.status(201).json({ emailLog, aiInsight });
   });
 
-  app.post('/api/reminders/simulate-9am-missed', async (req, res) => {
+  app.post('/api/reminders/simulate-9am-missed', requireAuth, async (req, res) => {
     const store = getStore();
     const force = Boolean(req.body?.force);
     const targetMed =
@@ -955,7 +1083,7 @@ export function createApp() {
     });
   });
 
-  app.post('/api/reminders/auto-scan', async (_req, res) => {
+  app.post('/api/reminders/auto-scan', requireAuth, async (_req, res) => {
     const store = getStore();
     const dispatched = [];
 
@@ -1008,20 +1136,21 @@ export function createApp() {
   });
 
   // 11. Emergency SOS Endpoint
-  app.post('/api/sos', async (req, res) => {
+  app.post('/api/sos', requireAuth, async (req, res) => {
     const store = getStore();
     const reason = req.body.reason || 'Ramesh Ji pressed the One-Tap Emergency SOS button on the Senior Comfort Dashboard.';
     const emailLog = await dispatchProactiveEmail({
       type: 'MISSED_MEDICATION',
       customNote: `🚨 EMERGENCY SOS TRIGGERED: ${reason}. Please call ${store.elderProfile.emergencyPhone} immediately.`,
-      triggeredBy: `${store.elderProfile.name} (SOS Button)`,
+      triggeredBy: `${req.user.name} (SOS Button)`,
     });
-    addActivity(store.elderProfile.name, 'elder', `🚨 Triggered Emergency SOS Alert: ${reason}`);
+    addActivity(req.user.name, req.user.role, `🚨 Triggered Emergency SOS Alert: ${reason}`);
+    persistState();
     res.status(201).json({ sosDispatched: true, emailLog });
   });
 
   // 12. Google Gemini AI Endpoints (@google/genai)
-  app.post('/api/ai/interactions', async (req, res) => {
+  app.post('/api/ai/interactions', requireAuth, async (req, res) => {
     const store = getStore();
     const apiKey = req.headers['x-gemini-api-key'] || req.body.apiKey || '';
     const analysis = await analyzeMedicationInteractions({
@@ -1033,14 +1162,14 @@ export function createApp() {
     res.json(analysis);
   });
 
-  app.post('/api/ai/scan-prescription', async (req, res) => {
+  app.post('/api/ai/scan-prescription', requireAuth, async (req, res) => {
     const apiKey = req.headers['x-gemini-api-key'] || req.body.apiKey || '';
     const { text = '', imageBase64 = '', mimeType = 'image/jpeg' } = req.body;
     const result = await parsePrescriptionInput({ text, imageBase64, mimeType, apiKey });
     res.json(result);
   });
 
-  app.post('/api/ai/companion', async (req, res) => {
+  app.post('/api/ai/companion', requireAuth, async (req, res) => {
     const store = getStore();
     const apiKey = req.headers['x-gemini-api-key'] || req.body.apiKey || '';
     const { message = 'What is my medication status today?', language = 'English' } = req.body;
@@ -1056,7 +1185,7 @@ export function createApp() {
     res.json(response);
   });
 
-  app.post('/api/ai/doctor-brief', async (req, res) => {
+  app.post('/api/ai/doctor-brief', requireAuth, async (req, res) => {
     const store = getStore();
     const apiKey = req.headers['x-gemini-api-key'] || req.body.apiKey || '';
     const brief = await generateDoctorVisitBrief({
@@ -1070,8 +1199,13 @@ export function createApp() {
     res.json(brief);
   });
 
-  // 13. Reset Demo Data Endpoint
-  app.post('/api/reset-demo', (_req, res) => {
+  // 13. Reset Demo Data Endpoint (only enabled in Demo Mode)
+  app.post('/api/reset-demo', requireAuth, (_req, res) => {
+    if (!isDemoModeEnabled()) {
+      return res.status(403).json({
+        error: 'Demo reset is disabled in production.',
+      });
+    }
     const fresh = resetStoreToSeed();
     res.json({ reset: true, medicationsCount: fresh.medications.length });
   });

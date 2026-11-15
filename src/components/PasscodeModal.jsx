@@ -17,7 +17,9 @@ export default function PasscodeModal({
   onClose,
   members = [],
   currentMember,
+  demoMode = false,
   onVerifyPasscode,
+  onDemoLogin,
   onAddMember,
 }) {
   const [selectedMemberId, setSelectedMemberId] = useState(currentMember?.id || members[0]?.id || '');
@@ -194,19 +196,27 @@ export default function PasscodeModal({
                           <p className="text-xs text-slate-500 truncate">{m.relationship}</p>
                         </div>
 
-                        {m.passcodePlainHint && (
+                        {demoMode && onDemoLogin && (
                           <button
                             type="button"
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation();
                               setSelectedMemberId(m.id);
-                              setPasscode(m.passcodePlainHint);
-                              handleSubmit(null, m.passcodePlainHint, m.id);
+                              setLoading(true);
+                              setError('');
+                              try {
+                                await onDemoLogin(m.id, m.role);
+                                onClose();
+                              } catch (err) {
+                                setError(err.message || 'Demo unlock failed');
+                              } finally {
+                                setLoading(false);
+                              }
                             }}
-                            className="mt-3 w-full py-1.5 px-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold flex items-center justify-center gap-1 transition"
+                            className="mt-3 w-full py-1.5 px-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold flex items-center justify-center gap-1 transition cursor-pointer"
                           >
                             <KeyRound className="w-3.5 h-3.5" />
-                            Unlock ({m.passcodePlainHint})
+                            Demo Unlock
                           </button>
                         )}
                       </div>
@@ -222,7 +232,7 @@ export default function PasscodeModal({
                         htmlFor="passcode-input"
                         className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5"
                       >
-                        2. Enter 6-Digit Security Passcode
+                        2. Enter 4 to 8 Digit Security Passcode
                       </label>
                       <div className="relative">
                         <Lock className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -236,7 +246,7 @@ export default function PasscodeModal({
                             setPasscode(e.target.value);
                             setError('');
                           }}
-                          placeholder="Enter PIN (e.g. 123456)"
+                          placeholder="Enter PIN"
                           className="w-full pl-11 pr-4 py-3 rounded-xl border-2 border-slate-300 focus:border-teal-600 text-lg font-mono tracking-widest"
                         />
                       </div>

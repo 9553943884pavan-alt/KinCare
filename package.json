@@ -10,7 +10,7 @@
     "build": "vite build",
     "start": "node server/index.js",
     "test": "vitest run",
-    "lint": "node --check server/index.js && node --check server/app.js"
+    "lint": "node --check server/index.js && node --check server/app.js && node --check server/data/store.js && node --check server/data/seedData.js && node --check server/security/passcodeAuth.js"
   },
   "keywords": [
     "elderly-care",
@@ -47,6 +47,6 @@
     "vitest": "^5.1.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.5.0"
   }
 }

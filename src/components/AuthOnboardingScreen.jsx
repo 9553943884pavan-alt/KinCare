@@ -20,7 +20,9 @@ import { speakText } from '../utils/api.js';
 export default function AuthOnboardingScreen({
   elderName = 'Ramesh Sharma',
   members = [],
+  demoMode = false,
   onVerifyPasscode,
+  onDemoLogin,
   onSignup,
   fontScale,
   setFontScale,
@@ -36,7 +38,7 @@ export default function AuthOnboardingScreen({
     mode: 'join_circle',
     role: 'family',
     name: '',
-    email: '9553943884pavan@gmail.com',
+    email: '',
     phone: '',
     relationship: 'Daughter / Son',
     passcode: '',
@@ -45,17 +47,12 @@ export default function AuthOnboardingScreen({
     elderConditions: '',
   });
 
-  const handleOneTapRole = async (member) => {
+  const handleOneTapRole = async (member, fallbackRole) => {
+    if (!demoMode || !onDemoLogin) return;
     setError('');
     setLoading(true);
     try {
-      const defaultPinMap = {
-        elder: '123456',
-        family: '654321',
-        caretaker: '112233',
-      };
-      const pin = member?.passcodePlainHint || defaultPinMap[member?.role] || '123456';
-      await onVerifyPasscode(pin, member?.id);
+      await onDemoLogin(member?.id, fallbackRole);
     } catch (err) {
       setError(err.message || 'Unable to sign in');
     } finally {
@@ -66,7 +63,7 @@ export default function AuthOnboardingScreen({
   const handleManualLogin = async (e) => {
     e.preventDefault();
     if (!passcodeInput || passcodeInput.trim().length < 4) {
-      setError('Please enter your 4 to 6 digit passcode (for example: 123456).');
+      setError('Please enter your 4 to 8 digit passcode.');
       return;
     }
     setError('');
@@ -227,100 +224,102 @@ export default function AuthOnboardingScreen({
 
         {authTab === 'login' ? (
           <div className="space-y-8">
-            {/* Step 1: Giant, Clear 3-Persona Fork Cards (GrandPad / Medisafe UX Pattern) */}
-            <section aria-label="One-Tap Role Selection">
-              <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-3">
-                Option 1 — Instant 1-Tap Access by Role (Care Circle for {elderName})
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                {/* Card 1: Elderly Person */}
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={() => handleOneTapRole(elderMember)}
-                  className="text-left rounded-3xl bg-white hover:bg-teal-50/70 border-2 border-teal-600 p-6 shadow-sm hover:shadow-md transition flex flex-col justify-between gap-5 cursor-pointer group min-h-[210px]"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="p-3 rounded-2xl bg-teal-100 text-teal-800">
-                        <UserCheck className="w-7 h-7" />
-                      </span>
-                      <span className="text-xs font-extrabold uppercase px-3 py-1 rounded-full bg-teal-700 text-white">
-                        Simple Senior UI
-                      </span>
+            {/* Step 1: Giant, Clear 3-Persona Fork Cards (Explicit Demo Mode Only) */}
+            {demoMode && (
+              <section aria-label="One-Tap Demo Role Selection">
+                <p className="text-xs font-extrabold uppercase tracking-wider text-teal-700 mb-3">
+                  Demo Mode Enabled — Instant 1-Tap Access by Role (Care Circle for {elderName})
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  {/* Card 1: Elderly Person */}
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => handleOneTapRole(elderMember, 'elder')}
+                    className="text-left rounded-3xl bg-white hover:bg-teal-50/70 border-2 border-teal-600 p-6 shadow-sm hover:shadow-md transition flex flex-col justify-between gap-5 cursor-pointer group min-h-[210px]"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="p-3 rounded-2xl bg-teal-100 text-teal-800">
+                          <UserCheck className="w-7 h-7" />
+                        </span>
+                        <span className="text-xs font-extrabold uppercase px-3 py-1 rounded-full bg-teal-700 text-white">
+                          Simple Senior UI
+                        </span>
+                      </div>
+                      <h3 className="text-xl font-extrabold text-slate-900">
+                        I am the Elderly Person
+                      </h3>
+                      <p className="text-sm text-slate-700 leading-relaxed">
+                        <strong>{elderMember?.name || elderName}</strong> — Giant buttons to see today&apos;s medicines, tap &quot;I Took It&quot;, or listen aloud.
+                      </p>
                     </div>
-                    <h3 className="text-xl font-extrabold text-slate-900">
-                      I am the Elderly Person
-                    </h3>
-                    <p className="text-sm text-slate-700 leading-relaxed">
-                      <strong>{elderMember?.name || elderName}</strong> — Giant buttons to see today&apos;s medicines, tap &quot;I Took It&quot;, or listen aloud.
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-between pt-3 border-t border-teal-100 text-teal-800 font-extrabold text-sm">
-                    <span>Enter Senior Mode (PIN: 123456)</span>
-                    <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                  </div>
-                </button>
+                    <div className="flex items-center justify-between pt-3 border-t border-teal-100 text-teal-800 font-extrabold text-sm">
+                      <span>Enter Senior Demo Mode</span>
+                      <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                    </div>
+                  </button>
 
-                {/* Card 2: Family Member */}
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={() => handleOneTapRole(familyMember)}
-                  className="text-left rounded-3xl bg-white hover:bg-indigo-50/70 border-2 border-indigo-400 p-6 shadow-sm hover:shadow-md transition flex flex-col justify-between gap-5 cursor-pointer group min-h-[210px]"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="p-3 rounded-2xl bg-indigo-100 text-indigo-800">
-                        <HeartHandshake className="w-7 h-7" />
-                      </span>
-                      <span className="text-xs font-extrabold uppercase px-3 py-1 rounded-full bg-indigo-700 text-white">
-                        Family Portal
-                      </span>
+                  {/* Card 2: Family Member */}
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => handleOneTapRole(familyMember, 'family')}
+                    className="text-left rounded-3xl bg-white hover:bg-indigo-50/70 border-2 border-indigo-400 p-6 shadow-sm hover:shadow-md transition flex flex-col justify-between gap-5 cursor-pointer group min-h-[210px]"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="p-3 rounded-2xl bg-indigo-100 text-indigo-800">
+                          <HeartHandshake className="w-7 h-7" />
+                        </span>
+                        <span className="text-xs font-extrabold uppercase px-3 py-1 rounded-full bg-indigo-700 text-white">
+                          Family Portal
+                        </span>
+                      </div>
+                      <h3 className="text-xl font-extrabold text-slate-900">
+                        I am a Family Member
+                      </h3>
+                      <p className="text-sm text-slate-700 leading-relaxed">
+                        <strong>{familyMember?.name || 'Priya Sharma'}</strong> — Track daily adherence, manage doctor appointments &amp; receive missed-dose emails.
+                      </p>
                     </div>
-                    <h3 className="text-xl font-extrabold text-slate-900">
-                      I am a Family Member
-                    </h3>
-                    <p className="text-sm text-slate-700 leading-relaxed">
-                      <strong>{familyMember?.name || 'Priya Sharma'}</strong> — Track daily adherence, manage doctor appointments &amp; receive missed-dose emails.
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-between pt-3 border-t border-indigo-100 text-indigo-800 font-extrabold text-sm">
-                    <span>Enter Family View (PIN: 654321)</span>
-                    <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                  </div>
-                </button>
+                    <div className="flex items-center justify-between pt-3 border-t border-indigo-100 text-indigo-800 font-extrabold text-sm">
+                      <span>Enter Family Demo View</span>
+                      <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                    </div>
+                  </button>
 
-                {/* Card 3: Caregiver */}
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={() => handleOneTapRole(caregiverMember)}
-                  className="text-left rounded-3xl bg-white hover:bg-amber-50/70 border-2 border-amber-400 p-6 shadow-sm hover:shadow-md transition flex flex-col justify-between gap-5 cursor-pointer group min-h-[210px]"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="p-3 rounded-2xl bg-amber-100 text-amber-800">
-                        <Stethoscope className="w-7 h-7" />
-                      </span>
-                      <span className="text-xs font-extrabold uppercase px-3 py-1 rounded-full bg-amber-600 text-white">
-                        Caregiver Portal
-                      </span>
+                  {/* Card 3: Caregiver */}
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => handleOneTapRole(caregiverMember, 'caretaker')}
+                    className="text-left rounded-3xl bg-white hover:bg-amber-50/70 border-2 border-amber-400 p-6 shadow-sm hover:shadow-md transition flex flex-col justify-between gap-5 cursor-pointer group min-h-[210px]"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="p-3 rounded-2xl bg-amber-100 text-amber-800">
+                          <Stethoscope className="w-7 h-7" />
+                        </span>
+                        <span className="text-xs font-extrabold uppercase px-3 py-1 rounded-full bg-amber-600 text-white">
+                          Caregiver Portal
+                        </span>
+                      </div>
+                      <h3 className="text-xl font-extrabold text-slate-900">
+                        I am a Caregiver
+                      </h3>
+                      <p className="text-sm text-slate-700 leading-relaxed">
+                        <strong>{caregiverMember?.name || 'Nurse Anita Rao'}</strong> — Update schedules, scan prescriptions &amp; monitor clinical safety.
+                      </p>
                     </div>
-                    <h3 className="text-xl font-extrabold text-slate-900">
-                      I am a Caregiver
-                    </h3>
-                    <p className="text-sm text-slate-700 leading-relaxed">
-                      <strong>{caregiverMember?.name || 'Nurse Anita Rao'}</strong> — Update schedules, scan prescriptions &amp; monitor clinical safety.
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-between pt-3 border-t border-amber-100 text-amber-800 font-extrabold text-sm">
-                    <span>Enter Caregiver View (PIN: 112233)</span>
-                    <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                  </div>
-                </button>
-              </div>
-            </section>
+                    <div className="flex items-center justify-between pt-3 border-t border-amber-100 text-amber-800 font-extrabold text-sm">
+                      <span>Enter Caregiver Demo View</span>
+                      <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                    </div>
+                  </button>
+                </div>
+              </section>
+            )}
 
             {/* Step 2: Manual Email + Passcode Login with Large Touch Keypad */}
             <section className="rounded-3xl bg-white border-2 border-slate-200 p-6 sm:p-8 shadow-xs">
@@ -328,10 +327,10 @@ export default function AuthOnboardingScreen({
                 <form onSubmit={handleManualLogin} className="lg:col-span-7 space-y-4">
                   <div>
                     <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
-                      Option 2 — Sign In with Your Account Email &amp; Passcode
+                      {demoMode ? 'Option 2 — ' : ''}Sign In with Your Account Email &amp; Passcode
                     </p>
                     <h3 className="text-xl font-extrabold text-slate-900 mt-1">
-                      Already created an account? Enter your passcode
+                      Enter your Care Circle passcode
                     </h3>
                   </div>
 
@@ -345,13 +344,13 @@ export default function AuthOnboardingScreen({
                         type="email"
                         value={emailInput}
                         onChange={(e) => setEmailInput(e.target.value)}
-                        placeholder="9553943884pavan@gmail.com"
+                        placeholder="you@example.com"
                         className="w-full px-4 py-3.5 rounded-2xl border-2 border-slate-300 focus:border-teal-600 text-sm font-medium"
                       />
                     </div>
                     <div>
                       <label htmlFor="login-passcode" className="block text-xs font-bold text-slate-700 mb-1.5">
-                        4 to 6 Digit Passcode *
+                        4 to 8 Digit Passcode *
                       </label>
                       <div className="relative">
                         <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -365,7 +364,7 @@ export default function AuthOnboardingScreen({
                             setPasscodeInput(e.target.value);
                             setError('');
                           }}
-                          placeholder="e.g. 123456"
+                          placeholder="Enter passcode"
                           className="w-full pl-10 pr-12 py-3.5 rounded-2xl border-2 border-slate-300 focus:border-teal-600 text-base font-mono tracking-widest"
                         />
                         <button
