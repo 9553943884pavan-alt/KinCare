@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+server/data/runtime-db.json
+*.log
+.DS_Store
+coverage/
+.vercel/

@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+  }
+}
+
+/* Custom Senior Accessibility Scaling */
+html.font-scale-normal {
+  font-size: 16px;
+}
+html.font-scale-large {
+  font-size: 18px;
+}
+html.font-scale-xlarge {
+  font-size: 20px;
+}
+
+/* High contrast mode enhancements */
+.high-contrast-mode {
+  filter: contrast(1.12);
+}
+
+/* Smooth focus rings for keyboard accessibility (WCAG AAA) */
+*:focus-visible {
+  outline: 3px solid #0d9488;
+  outline-offset: 2px;
+}
