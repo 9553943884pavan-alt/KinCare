@@ -148,4 +148,33 @@ describe('KinCare AI — Elderly Care & Medication Management Platform API', () 
     expect(res.body.emailLog.recipients).toContain('9553943884pavan@gmail.com');
     expect(res.body.emailLog.htmlBody).toContain('Intelligent Caregiver Notification Insights');
   });
+
+  it('POST /api/auth/signup creates a new member account and allows email + passcode login', async () => {
+    const signupRes = await request(app)
+      .post('/api/auth/signup')
+      .send({
+        mode: 'join_circle',
+        role: 'family',
+        name: 'Pavan Kumar',
+        email: 'pavan.family.test@example.com',
+        phone: '+91 90000 11223',
+        relationship: 'Son',
+        passcode: '778899',
+      });
+    expect(signupRes.status).toBe(201);
+    expect(signupRes.body.token).toBeTruthy();
+    expect(signupRes.body.member.name).toBe('Pavan Kumar');
+    expect(signupRes.body.member.role).toBe('family');
+    expect(signupRes.body.member.email).toBe('pavan.family.test@example.com');
+
+    const loginRes = await request(app)
+      .post('/api/auth/verify-passcode')
+      .send({
+        email: 'pavan.family.test@example.com',
+        passcode: '778899',
+      });
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.token).toBeTruthy();
+    expect(loginRes.body.member.name).toBe('Pavan Kumar');
+  });
 });

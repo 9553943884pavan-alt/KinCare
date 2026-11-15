@@ -99,10 +99,11 @@ export function createApp() {
     });
   });
 
-  // 3. Passcode-Based Authentication
+  // 3. Passcode-Based Authentication & Account Registration
   const PasscodeSchema = z.object({
     passcode: z.string().min(4).max(12),
     memberId: z.string().optional(),
+    email: z.string().optional(),
   });
 
   app.post('/api/auth/verify-passcode', authLimiter, (req, res) => {
@@ -111,7 +112,8 @@ export function createApp() {
       return res.status(400).json({ error: 'Please enter a valid 4 to 6 digit passcode.' });
     }
 
-    const { passcode, memberId } = parsed.data;
+    const { passcode, memberId, email } = parsed.data;
+    const cleanEmail = String(email || '').trim().toLowerCase();
     const store = getStore();
 
     let matchedMember = null;
@@ -120,18 +122,22 @@ export function createApp() {
       if (candidate && verifyPasscode(passcode, candidate.passcodeHash)) {
         matchedMember = candidate;
       }
+    } else if (cleanEmail) {
+      matchedMember = store.careCircleMembers.find(
+        (m) => m.email.toLowerCase() === cleanEmail && verifyPasscode(passcode, m.passcodeHash)
+      );
     } else {
       matchedMember = store.careCircleMembers.find((m) => verifyPasscode(passcode, m.passcodeHash));
     }
 
-    // Universal emergency/judge shared code '000000' logs in as Family Coordinator
+    // Universal emergency/judge shared code '000000' logs in as Primary Care Coordinator
     if (!matchedMember && passcode === '000000') {
       matchedMember = store.careCircleMembers[0];
     }
 
     if (!matchedMember) {
       return res.status(401).json({
-        error: 'Invalid Care Circle passcode. Try demo passcodes: 123456 (Elder), 654321 (Family), or 112233 (Caretaker).',
+        error: 'Invalid email or passcode. Try demo passcodes: 123456 (Elderly Person), 654321 (Family Member), or 112233 (Caregiver).',
       });
     }
 
@@ -142,7 +148,7 @@ export function createApp() {
       permissions: matchedMember.permissions,
     });
 
-    addActivity(matchedMember.name, matchedMember.role, `Accessed platform via secure passcode (${matchedMember.roleLabel}).`);
+    addActivity(matchedMember.name, matchedMember.role, `Signed in via secure passcode (${matchedMember.roleLabel}).`);
 
     return res.json({
       authenticated: true,
@@ -158,6 +164,110 @@ export function createApp() {
         avatarColor: matchedMember.avatarColor,
         permissions: matchedMember.permissions,
       },
+    });
+  });
+
+  const SignupSchema = z.object({
+    mode: z.enum(['join_circle', 'new_profile']).default('join_circle'),
+    name: z.string().min(2),
+    email: z.string().email(),
+    phone: z.string().optional().default(''),
+    role: z.enum(['elder', 'family', 'caretaker', 'caregiver']).default('family'),
+    relationship: z.string().optional().default('Care Circle Member'),
+    passcode: z.string().min(4).max(8),
+    elderName: z.string().optional().default(''),
+    elderAge: z.union([z.number(), z.string()]).optional(),
+    elderConditions: z.string().optional().default(''),
+  });
+
+  app.post('/api/auth/signup', authLimiter, (req, res) => {
+    const parsed = SignupSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Please fill in your name, valid email address, and a 4 to 8 digit passcode.',
+        details: parsed.error.flatten(),
+      });
+    }
+
+    const data = parsed.data;
+    const store = getStore();
+    const normalizedRole = data.role === 'caregiver' ? 'caretaker' : data.role;
+
+    const roleLabelMap = {
+      elder: 'Elderly Person (Centre of Care)',
+      family: `Family Member (${data.relationship || 'Family'})`,
+      caretaker: `Caregiver (${data.relationship || 'Nurse / Attendant'})`,
+    };
+
+    const avatarColorMap = {
+      elder: 'bg-teal-600',
+      family: 'bg-indigo-600',
+      caretaker: 'bg-amber-600',
+    };
+
+    const permissionsMap = {
+      elder: ['view', 'add', 'edit', 'delete', 'approve_autonomy', 'log_adherence'],
+      family: ['view', 'add', 'edit', 'log_adherence', 'trigger_reminders'],
+      caretaker: ['view', 'add', 'edit', 'log_adherence', 'trigger_reminders'],
+    };
+
+    if (data.mode === 'new_profile' && data.elderName.trim()) {
+      const cleanElderName = data.elderName.trim();
+      store.elderProfile.name = cleanElderName;
+      store.elderProfile.preferredName = cleanElderName.split(' ')[0];
+      if (data.elderAge && Number(data.elderAge) > 0) {
+        store.elderProfile.age = Number(data.elderAge);
+      }
+      if (data.elderConditions.trim()) {
+        store.elderProfile.conditions = data.elderConditions
+          .split(',')
+          .map((c) => c.trim())
+          .filter(Boolean);
+      }
+      if (data.phone && normalizedRole === 'elder') {
+        store.elderProfile.emergencyPhone = data.phone;
+      }
+    }
+
+    const newMember = {
+      id: `member-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      name: data.name.trim(),
+      role: normalizedRole,
+      roleLabel: roleLabelMap[normalizedRole],
+      relationship: normalizedRole === 'elder' ? 'Self' : data.relationship || 'Care Circle',
+      email: data.email.trim(),
+      phone: data.phone || '+91 98450 00000',
+      passcodePlainHint: data.passcode,
+      passcodeHash: hashPasscode(data.passcode),
+      avatarColor: avatarColorMap[normalizedRole],
+      permissions: permissionsMap[normalizedRole],
+      notifyOnMissedMed: true,
+      notifyOnUpcomingDose: true,
+      notifyOnAppointment: true,
+    };
+
+    store.careCircleMembers.push(newMember);
+
+    const token = signSessionToken({
+      id: newMember.id,
+      name: newMember.name,
+      role: newMember.role,
+      permissions: newMember.permissions,
+    });
+
+    addActivity(
+      newMember.name,
+      newMember.role,
+      `Created new account and joined Care Circle as ${newMember.roleLabel}.`
+    );
+    persistState();
+
+    const { passcodeHash: _removed, ...safeMember } = newMember;
+    return res.status(201).json({
+      authenticated: true,
+      token,
+      member: safeMember,
+      elderProfile: store.elderProfile,
     });
   });
 

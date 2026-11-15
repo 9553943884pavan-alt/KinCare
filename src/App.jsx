@@ -25,6 +25,7 @@ import {
   Upload,
   Check,
   QrCode,
+  LogOut,
 } from 'lucide-react';
 
 import {
@@ -37,11 +38,13 @@ import {
 } from './utils/api.js';
 import PasscodeModal from './components/PasscodeModal.jsx';
 import SeniorComfortView from './components/SeniorComfortView.jsx';
+import AuthOnboardingScreen from './components/AuthOnboardingScreen.jsx';
 import { MedicationModal, AppointmentModal, EmergencyIdModal } from './components/Modals.jsx';
 
 export default function App() {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeMember, setActiveMember] = useState(null);
   const [viewMode, setViewMode] = useState('command'); // 'comfort' (Senior Mode) | 'command' (Full Care Ecosystem)
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'medications' | 'appointments' | 'emails' | 'ai-studio'
@@ -113,21 +116,45 @@ export default function App() {
     html.classList.add(`font-scale-${fontScale}`);
   }, [fontScale]);
 
-  // Passcode Authentication Handler
-  const handleVerifyPasscode = async (passcode, memberId) => {
+  // Passcode Authentication & Account Signup Handlers
+  const handleVerifyPasscode = async (passcode, memberId, email = '') => {
     const res = await apiFetch('/api/auth/verify-passcode', {
       method: 'POST',
-      body: JSON.stringify({ passcode, memberId }),
+      body: JSON.stringify({ passcode, memberId, email }),
     });
     setStoredToken(res.token);
     setActiveMember(res.member);
+    setIsAuthenticated(true);
     if (res.member.role === 'elder') {
       setViewMode('comfort');
     } else {
       setViewMode('command');
     }
-    showToast(`Unlocked Care Profile as ${res.member.name} (${res.member.roleLabel})`);
+    showToast(`Signed in as ${res.member.name} (${res.member.roleLabel})`);
     await fetchDashboardData();
+  };
+
+  const handleSignup = async (signupForm) => {
+    const res = await apiFetch('/api/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify(signupForm),
+    });
+    setStoredToken(res.token);
+    setActiveMember(res.member);
+    setIsAuthenticated(true);
+    if (res.member.role === 'elder') {
+      setViewMode('comfort');
+    } else {
+      setViewMode('command');
+    }
+    showToast(`Account created! Welcome to KinCare AI, ${res.member.name}`);
+    await fetchDashboardData();
+  };
+
+  const handleSignOut = () => {
+    setStoredToken('');
+    setIsAuthenticated(false);
+    showToast('Signed out — choose your role or sign in anytime');
   };
 
   const handleAddCareMember = async (memberData) => {
@@ -460,6 +487,37 @@ export default function App() {
   const filteredMedications =
     slotFilter === 'All' ? medications : medications.filter((m) => m.timeSlot === slotFilter);
 
+  if (!isAuthenticated) {
+    return (
+      <div className={highContrast ? 'high-contrast-mode' : ''}>
+        {toastBanner && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`fixed bottom-5 right-5 z-50 max-w-md px-5 py-3.5 rounded-2xl shadow-2xl border flex items-center gap-3 text-sm font-bold transition-all ${
+              toastBanner.type === 'error'
+                ? 'bg-rose-800 text-white border-rose-600'
+                : toastBanner.type === 'warning'
+                  ? 'bg-amber-900 text-white border-amber-600'
+                  : 'bg-slate-900 text-white border-teal-500'
+            }`}
+          >
+            <CheckCircle2 className="w-5 h-5 text-teal-400 shrink-0" />
+            <span>{toastBanner.title}</span>
+          </div>
+        )}
+        <AuthOnboardingScreen
+          elderName={elderProfile?.name || 'Ramesh Sharma'}
+          members={careCircleMembers}
+          onVerifyPasscode={handleVerifyPasscode}
+          onSignup={handleSignup}
+          fontScale={fontScale}
+          setFontScale={setFontScale}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className={`min-h-screen flex flex-col bg-slate-50 text-slate-900 ${highContrast ? 'high-contrast-mode' : ''}`}>
       {/* Toast Notification */}
@@ -582,7 +640,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* 3-Role Instant Switcher + Passcode Vault */}
+          {/* Clean Role Switcher + Account Sign Out / Switch User */}
           <div className="flex flex-wrap items-center gap-2.5">
             <div
               className="inline-flex rounded-2xl bg-slate-100 p-1 border border-slate-200"
@@ -599,7 +657,7 @@ export default function App() {
                 }`}
               >
                 <Volume2 className="w-3.5 h-3.5" />
-                Elderly Person
+                Elderly View
               </button>
               <button
                 type="button"
@@ -611,7 +669,7 @@ export default function App() {
                 }`}
               >
                 <Users className="w-3.5 h-3.5" />
-                Family Member
+                Family Portal
               </button>
               <button
                 type="button"
@@ -623,33 +681,30 @@ export default function App() {
                 }`}
               >
                 <Activity className="w-3.5 h-3.5" />
-                Caregiver
+                Caregiver View
               </button>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setViewMode(viewMode === 'comfort' ? 'command' : 'comfort')}
-              className="px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold cursor-pointer"
-              title="Toggle Senior Comfort UI vs Command Center"
-            >
-              {viewMode === 'comfort' ? 'Portal View' : 'Comfort UI'}
-            </button>
+            {viewMode === 'command' && (
+              <button
+                type="button"
+                onClick={() => setPasscodeModalOpen(true)}
+                className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-slate-900 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                title="Manage Care Circle Members & Passcodes"
+              >
+                <KeyRound className="w-3.5 h-3.5 text-amber-700" />
+                <span>{activeMember?.name?.split(' ')[0] || 'Vault'}</span>
+              </button>
+            )}
 
             <button
               type="button"
-              onClick={() => setPasscodeModalOpen(true)}
-              className="px-3.5 py-2 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-slate-900 text-xs font-bold flex items-center gap-2 transition cursor-pointer"
+              onClick={handleSignOut}
+              className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer"
+              title="Sign Out or Create / Switch Account"
             >
-              <KeyRound className="w-4 h-4 text-amber-700" />
-              <div className="text-left">
-                <span className="block text-[10px] uppercase tracking-wider text-amber-800 font-extrabold">
-                  Passcode Vault
-                </span>
-                <span className="font-bold">
-                  {activeMember?.name || 'Ramesh Sharma'} ({activeMember?.role === 'caretaker' ? 'Caregiver' : activeMember?.role || 'elder'})
-                </span>
-              </div>
+              <LogOut className="w-3.5 h-3.5 text-slate-600" />
+              Switch Account / Login
             </button>
           </div>
         </div>
@@ -783,6 +838,63 @@ export default function App() {
             {/* TAB 1: OVERVIEW */}
             {activeTab === 'overview' && (
               <div className="space-y-6">
+                {/* Clear 1 -> 2 -> 3 Workflow Guide for New Users & Judges */}
+                <section className="rounded-3xl bg-gradient-to-r from-teal-800 via-teal-700 to-indigo-800 text-white p-5 sm:p-6 shadow-sm">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-4">
+                    <div>
+                      <span className="text-[11px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 text-teal-100">
+                        How KinCare AI Works — 3 Simple Steps
+                      </span>
+                      <h2 className="text-lg sm:text-xl font-extrabold mt-2">
+                        Easy Workflow for Families, Caregivers &amp; Seniors
+                      </h2>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleQuickRoleSwitch('elder')}
+                        className="px-3.5 py-2 rounded-xl bg-white text-teal-900 hover:bg-teal-50 text-xs font-extrabold cursor-pointer"
+                      >
+                        Try Simple Senior View →
+                      </button>
+                      <button
+                        type="button"
+                        disabled={emailSending}
+                        onClick={() => {
+                          handleSimulate9AmMissed();
+                          setActiveTab('emails');
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold cursor-pointer"
+                      >
+                        Test 9:00 AM Missed Alert Email →
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="rounded-2xl bg-white/10 border border-white/15 p-3.5">
+                      <p className="text-xs font-extrabold text-amber-300 uppercase">Step 1 • Setup Care</p>
+                      <p className="text-sm font-bold mt-0.5">Family or Caregiver adds pills &amp; visits</p>
+                      <p className="text-xs text-teal-100 mt-1">
+                        Scan a prescription or manage schedules cleanly in tabs above.
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-white/10 border border-white/15 p-3.5">
+                      <p className="text-xs font-extrabold text-amber-300 uppercase">Step 2 • Senior 1-Tap</p>
+                      <p className="text-sm font-bold mt-0.5">Elderly person confirms in comfort mode</p>
+                      <p className="text-xs text-teal-100 mt-1">
+                        One big &quot;I Took This Medicine&quot; button, Voice Helper, &amp; 1-tap mood check.
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-white/10 border border-white/15 p-3.5">
+                      <p className="text-xs font-extrabold text-amber-300 uppercase">Step 3 • Auto Email</p>
+                      <p className="text-sm font-bold mt-0.5">Missed 9:00 AM doses trigger instant email</p>
+                      <p className="text-xs text-teal-100 mt-1">
+                        Unconfirmed doses automatically alert trusted contacts via Resend.
+                      </p>
+                    </div>
+                  </div>
+                </section>
+
                 {/* Summary KPI Cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
