@@ -190,16 +190,30 @@ export default function App() {
   }, [autoWatcherActive, isAuthenticated]);
 
   // Passcode Authentication & Account Signup Handlers
+  const applyAuthSession = async (res) => {
+    setStoredToken(res.token);
+    if (res.dashboard && res.dashboard.elderProfile) {
+      setDashboard(res.dashboard);
+      setDemoMode(Boolean(res.dashboard.demoMode));
+      setActiveMember(res.member);
+      setViewMode(res.member.role === 'elder' ? 'comfort' : 'command');
+      setIsAuthenticated(true);
+      setError(null);
+      setLoading(false);
+    } else {
+      setActiveMember(res.member);
+      setViewMode(res.member.role === 'elder' ? 'comfort' : 'command');
+      await fetchDashboardData();
+      setIsAuthenticated(true);
+    }
+  };
+
   const handleVerifyPasscode = async (passcode, memberId, email = '') => {
     const res = await apiFetch('/api/auth/verify-passcode', {
       method: 'POST',
       body: JSON.stringify({ passcode, memberId, email }),
     });
-    setStoredToken(res.token);
-    setActiveMember(res.member);
-    setViewMode(res.member.role === 'elder' ? 'comfort' : 'command');
-    await fetchDashboardData();
-    setIsAuthenticated(true);
+    await applyAuthSession(res);
     showToast(`Signed in as ${res.member.name} (${res.member.roleLabel})`);
   };
 
@@ -208,11 +222,7 @@ export default function App() {
       method: 'POST',
       body: JSON.stringify({ memberId, role }),
     });
-    setStoredToken(res.token);
-    setActiveMember(res.member);
-    setViewMode(res.member.role === 'elder' ? 'comfort' : 'command');
-    await fetchDashboardData();
-    setIsAuthenticated(true);
+    await applyAuthSession(res);
     showToast(`Signed in (Demo) as ${res.member.name} (${res.member.roleLabel})`);
   };
 
@@ -221,11 +231,7 @@ export default function App() {
       method: 'POST',
       body: JSON.stringify(signupForm),
     });
-    setStoredToken(res.token);
-    setActiveMember(res.member);
-    setViewMode(res.member.role === 'elder' ? 'comfort' : 'command');
-    await fetchDashboardData();
-    setIsAuthenticated(true);
+    await applyAuthSession(res);
     showToast(`Account created! Welcome to KinCare AI, ${res.member.name}`);
   };
 

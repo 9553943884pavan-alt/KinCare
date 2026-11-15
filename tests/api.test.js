@@ -617,4 +617,32 @@ describe('KinCare AI — Elderly Care & Medication Management Platform API', () 
       }
     }
   });
+
+  // Regression Test 5: Demo login bundles full dashboard payload & cache-control for all 3 profiles
+  it('returns bundled dashboard payload and no-store cache headers across elder, family, and caretaker demo-login', async () => {
+    const prevDemoMode = process.env.DEMO_MODE;
+    process.env.DEMO_MODE = 'true';
+    try {
+      for (const role of ['elder', 'family', 'caretaker']) {
+        const res = await request(app)
+          .post('/api/auth/demo-login')
+          .send({ role });
+        expect(res.status).toBe(200);
+        expect(res.headers['cache-control']).toContain('no-store');
+        expect(res.body.authenticated).toBe(true);
+        expect(res.body.token).toBeTruthy();
+        expect(res.body.member.role).toBe(role);
+        expect(res.body.dashboard).toBeTruthy();
+        expect(res.body.dashboard.authenticatedMember.role).toBe(role);
+        expect(res.body.dashboard.elderProfile).toBeTruthy();
+        expect(res.body.dashboard.elderProfile.name).toBeTruthy();
+      }
+    } finally {
+      if (prevDemoMode === undefined) {
+        delete process.env.DEMO_MODE;
+      } else {
+        process.env.DEMO_MODE = prevDemoMode;
+      }
+    }
+  });
 });

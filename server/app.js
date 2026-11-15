@@ -113,7 +113,11 @@ export function createApp() {
   });
 
   // Optional session reader middleware
-  app.use((req, _res, next) => {
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api')) {
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.set('Vary', 'Authorization');
+    }
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.slice(7);
@@ -121,6 +125,38 @@ export function createApp() {
     }
     next();
   });
+
+  function buildDashboardPayload(store, authenticatedMember) {
+    const sanitizedMembers = store.careCircleMembers.map((m) => sanitizeMemberPayload(m));
+    const totalMeds = store.medications.length;
+    const takenMeds = store.medications.filter((m) => m.status === 'taken').length;
+    const missedMeds = store.medications.filter((m) => m.status === 'missed').length;
+    const upcomingMeds = store.medications.filter((m) => m.status === 'upcoming').length;
+    const adherenceRate = totalMeds > 0 ? Math.round((takenMeds / totalMeds) * 100) : 100;
+
+    return {
+      authenticatedMember,
+      demoMode: isDemoModeEnabled(),
+      elderProfile: store.elderProfile,
+      careCircleMembers: sanitizedMembers,
+      medications: store.medications,
+      routines: store.routines,
+      appointments: store.appointments,
+      adherenceHistory: store.adherenceHistory,
+      vitalsLog: store.vitalsLog,
+      autonomyDecisions: store.autonomyDecisions,
+      emailLogs: store.emailLogs,
+      activityFeed: store.activityFeed,
+      summaryMetrics: {
+        totalMeds,
+        takenMeds,
+        missedMeds,
+        upcomingMeds,
+        adherenceRate,
+        lowStockCount: store.medications.filter((m) => m.stockRemaining <= m.refillThreshold).length,
+      },
+    };
+  }
 
   // 1. Health & Readiness Endpoint (Cloud Run & Platform Assessment Check)
   app.get('/api/health', (_req, res) => {
@@ -221,6 +257,7 @@ export function createApp() {
       });
     }
 
+    const sanitizedMember = sanitizeMemberPayload(matchedMember);
     const token = signSessionToken({
       id: matchedMember.id,
       name: matchedMember.name,
@@ -235,7 +272,8 @@ export function createApp() {
       authenticated: true,
       demoMode,
       token,
-      member: sanitizeMemberPayload(matchedMember),
+      member: sanitizedMember,
+      dashboard: buildDashboardPayload(store, sanitizedMember),
     });
   });
 
@@ -258,7 +296,7 @@ export function createApp() {
       const normalizedRole = role === 'caregiver' ? 'caretaker' : role;
       matchedMember = store.careCircleMembers.find((m) => m.role === normalizedRole);
     }
-    if (!matchedMember && !memberId && !role) {
+    if (!matchedMember) {
       matchedMember = store.careCircleMembers[0];
     }
 
@@ -266,6 +304,7 @@ export function createApp() {
       return res.status(404).json({ error: 'Demo member not found.' });
     }
 
+    const sanitizedMember = sanitizeMemberPayload(matchedMember);
     const token = signSessionToken({
       id: matchedMember.id,
       name: matchedMember.name,
@@ -280,7 +319,8 @@ export function createApp() {
       authenticated: true,
       demoMode: true,
       token,
-      member: sanitizeMemberPayload(matchedMember),
+      member: sanitizedMember,
+      dashboard: buildDashboardPayload(store, sanitizedMember),
     });
   });
 
@@ -389,12 +429,14 @@ export function createApp() {
     );
     persistState();
 
+    const sanitizedMember = sanitizeMemberPayload(newMember);
     return res.status(201).json({
       authenticated: true,
       demoMode: isDemoModeEnabled(),
       token,
-      member: sanitizeMemberPayload(newMember),
+      member: sanitizedMember,
       elderProfile: store.elderProfile,
+      dashboard: buildDashboardPayload(store, sanitizedMember),
     });
   });
 
@@ -521,34 +563,7 @@ export function createApp() {
       });
     }
 
-    const totalMeds = store.medications.length;
-    const takenMeds = store.medications.filter((m) => m.status === 'taken').length;
-    const missedMeds = store.medications.filter((m) => m.status === 'missed').length;
-    const upcomingMeds = store.medications.filter((m) => m.status === 'upcoming').length;
-    const adherenceRate = totalMeds > 0 ? Math.round((takenMeds / totalMeds) * 100) : 100;
-
-    res.json({
-      authenticatedMember,
-      demoMode,
-      elderProfile: store.elderProfile,
-      careCircleMembers: sanitizedMembers,
-      medications: store.medications,
-      routines: store.routines,
-      appointments: store.appointments,
-      adherenceHistory: store.adherenceHistory,
-      vitalsLog: store.vitalsLog,
-      autonomyDecisions: store.autonomyDecisions,
-      emailLogs: store.emailLogs,
-      activityFeed: store.activityFeed,
-      summaryMetrics: {
-        totalMeds,
-        takenMeds,
-        missedMeds,
-        upcomingMeds,
-        adherenceRate,
-        lowStockCount: store.medications.filter((m) => m.stockRemaining <= m.refillThreshold).length,
-      },
-    });
+    return res.json(buildDashboardPayload(store, authenticatedMember));
   });
 
   // 5. Medication Schedule CRUD & Adherence Tracking
